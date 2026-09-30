@@ -3,6 +3,7 @@ import type {
   Departure, Mode, PlanRequest, PlanResult, RouteDetail, RouteDirection, RouteInfo, Station, StationLine, Vehicle,
 } from '../../../shared/types.ts';
 import { defaultColor, modeFromRouteType, normColor } from '../modes.ts';
+import { bearing, buildTrack, pointAt, type Track } from './track.ts';
 import { addDays, localTimeToEpoch, midnight, nowSec, serviceDate, weekday } from '../time.ts';
 
 /** Realtime info the store can apply to scheduled data. */
@@ -29,6 +30,13 @@ interface StopRec {
 
 export type DepInternal = Departure & { seq: number };
 
+interface ActiveTrip {
+  trip_id: string; start: number; end: number; route_id: string; service_id: string;
+  direction_id: number; headsign: string; shape_id: string | null; last_stop: string;
+}
+
+interface TripStop { seq: number; stop_id: string; arr: number; dep: number }
+
 const MODE_ORDER: Mode[] = ['metro', 'train', 'tram', 'bus', 'ship', 'other'];
 
 const normalize = (s: string) =>
@@ -41,13 +49,6 @@ export function haversine(lat1: number, lon1: number, lat2: number, lon2: number
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-function bearing(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const toRad = Math.PI / 180;
-  const y = Math.sin((lon2 - lon1) * toRad) * Math.cos(lat2 * toRad);
-  const x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) - Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos((lon2 - lon1) * toRad);
-  return (Math.atan2(y, x) / toRad + 360) % 360;
-}
-
 export class GtfsStore {
   readonly db: DatabaseSync;
   readonly version: string;
@@ -58,6 +59,10 @@ export class GtfsStore {
   private svcCache = new Map<string, Set<string>>();
   private tripCache = new Map<string, { routeId: string; directionId: number; headsign: string } | null>();
   private routeDetailCache = new Map<string, RouteDetail>();
+  private tripStopsCache = new Map<string, TripStop[]>();
+  private trackCache = new Map<string, Track | null>();
+  private activeCache = new Map<string, ActiveTrip[]>();
+  private vehicleCache?: { at: number; rt?: RealtimeLookup; list: Vehicle[] };
   private q: Record<string, StatementSync> = {};
 
   constructor(dbPath: string) {
@@ -69,10 +74,8 @@ export class GtfsStore {
     this.q = {
       trip: this.db.prepare('SELECT route_id, direction_id, headsign FROM trips WHERE trip_id = ?'),
       activeTrips: this.db.prepare(
-        `SELECT tb.trip_id, t.route_id, t.service_id, t.direction_id, t.headsign, tb.last_stop
+        `SELECT tb.trip_id, tb.start, tb.end, t.route_id, t.service_id, t.direction_id, t.headsign, t.shape_id, tb.last_stop
          FROM trip_bounds tb JOIN trips t ON t.trip_id = tb.trip_id WHERE tb.start <= ? AND tb.end >= ?`),
-      lastAt: this.db.prepare('SELECT seq, stop_id, arr, dep FROM stop_times WHERE trip_id = ? AND arr <= ? ORDER BY seq DESC LIMIT 1'),
-      nextAfter: this.db.prepare('SELECT seq, stop_id, arr, dep FROM stop_times WHERE trip_id = ? AND seq > ? ORDER BY seq LIMIT 1'),
       cdates: this.db.prepare('SELECT service_id, type FROM calendar_dates WHERE date = ?'),
       tripStops: this.db.prepare('SELECT seq, stop_id, arr, dep FROM stop_times WHERE trip_id = ? ORDER BY seq'),
       shape: this.db.prepare('SELECT lat, lon FROM shapes WHERE shape_id = ? ORDER BY seq'),
@@ -332,44 +335,126 @@ export class GtfsStore {
     return undefined;
   }
 
-  /** Vehicle positions interpolated from the timetable (+ realtime delay when known). */
+  private tripStops(tripId: string): TripStop[] {
+    let v = this.tripStopsCache.get(tripId);
+    if (!v) {
+      v = this.q.tripStops.all(tripId) as unknown as TripStop[];
+      if (this.tripStopsCache.size > 20_000) this.tripStopsCache.clear();
+      this.tripStopsCache.set(tripId, v);
+    }
+    return v;
+  }
+
+  /** Trips running around `secs` on service day `day`; the DB query is shared for a 5-minute window. */
+  private activeTrips(day: string, secs: number): ActiveTrip[] {
+    const bucket = Math.floor(secs / 300);
+    const key = `${day}:${bucket}`;
+    let rows = this.activeCache.get(key);
+    if (!rows) {
+      const from = bucket * 300;
+      rows = this.q.activeTrips.all(from + 300 + 60, from - 20 * 60) as unknown as ActiveTrip[];
+      if (this.activeCache.size > 8) this.activeCache.clear();
+      this.activeCache.set(key, rows);
+    }
+    return rows;
+  }
+
+  /** Track for a trip's shape with its stops snapped on; shared by all trips with the same pattern. */
+  private track(shapeId: string | null, stops: TripStop[]): Track | undefined {
+    if (!shapeId) return undefined;
+    const key = `${shapeId}|${stops.map((s) => s.stop_id).join(',')}`;
+    let t = this.trackCache.get(key);
+    if (t === undefined) {
+      const coords = (this.q.shape.all(shapeId) as { lat: number; lon: number }[]).map((p) => [p.lon, p.lat] as [number, number]);
+      const pts = stops.map((s) => this.stops.get(s.stop_id)).map((s) => (s ? [s.lon, s.lat] as [number, number] : undefined));
+      t = pts.every(Boolean) ? buildTrack(coords, pts as [number, number][]) ?? null : null;
+      if (this.trackCache.size > 5_000) this.trackCache.clear();
+      this.trackCache.set(key, t);
+    }
+    return t ?? undefined;
+  }
+
+  /**
+   * Delay (s) expected when arriving at stop index `idx`: the latest realtime update at or before
+   * that stop; before the first update, that first update's delay.
+   */
+  private delayAt(stops: TripStop[], tu: TripRealtime, base: number, idx: number): number | undefined {
+    let best: { i: number; d: number } | undefined;
+    let first: { i: number; d: number } | undefined;
+    for (const u of tu.updates) {
+      const i = u.seq !== undefined ? stops.findIndex((s) => s.seq === u.seq) : stops.findIndex((s) => s.stop_id === u.stopId);
+      if (i < 0) continue;
+      const d = u.arrDelay ?? u.depDelay
+        ?? (u.arrTime ? u.arrTime - (base + stops[i].arr) : u.depTime ? u.depTime - (base + stops[i].dep) : undefined);
+      if (d === undefined) continue;
+      if (i <= idx && (!best || i > best.i)) best = { i, d };
+      if (!first || i < first.i) first = { i, d };
+    }
+    return (best ?? first)?.d;
+  }
+
+  /** Vehicle positions from the timetable, shifted by realtime delays, placed on the real track shape. */
   scheduledVehicles(now = nowSec(), rt?: RealtimeLookup): Vehicle[] {
+    // Positions only change meaningfully per second; share the result between concurrent clients.
+    if (this.vehicleCache && this.vehicleCache.at === now && this.vehicleCache.rt === rt) return this.vehicleCache.list;
     const out: Vehicle[] = [];
     const today = serviceDate(now);
     for (const day of [addDays(today, -1), today]) {
       const base = midnight(day);
       const services = this.activeServices(day);
       const secs = now - base;
-      // Look back a few minutes so late-running trips stay visible.
-      const rows = this.q.activeTrips.all(secs + 60, secs - 15 * 60) as {
-        trip_id: string; route_id: string; service_id: string; direction_id: number; headsign: string; last_stop: string;
-      }[];
+      // Look back so late-running trips stay visible.
+      const rows = this.activeTrips(day, secs).filter((r) => r.start <= secs + 60 && r.end >= secs - 20 * 60);
       for (const r of rows) {
         if (!services.has(r.service_id)) continue;
         const route = this.routes.get(r.route_id);
         if (!route) continue;
         const tu = rt?.trip(r.trip_id);
         if (tu?.canceled) continue;
-        const delay = tu?.updates.find((u) => u.depDelay !== undefined || u.arrDelay !== undefined);
-        const d = delay ? delay.depDelay ?? delay.arrDelay ?? 0 : 0;
-        const t = secs - d;
-        const a = this.q.lastAt.get(r.trip_id, t) as { seq: number; stop_id: string; arr: number; dep: number } | undefined;
-        if (!a) continue;
-        const sa = this.stops.get(a.stop_id);
-        if (!sa) continue;
-        let lat = sa.lat, lon = sa.lon, brg: number | undefined;
-        const b = this.q.nextAfter.get(r.trip_id, a.seq) as { seq: number; stop_id: string; arr: number } | undefined;
-        if (!b && t > a.dep) continue; // trip finished
-        if (b) {
-          const sb = this.stops.get(b.stop_id);
-          if (sb) {
-            brg = bearing(sa.lat, sa.lon, sb.lat, sb.lon);
-            if (t > a.dep && b.arr > a.dep) {
-              const f = Math.min(1, (t - a.dep) / (b.arr - a.dep));
-              lat = sa.lat + (sb.lat - sa.lat) * f;
-              lon = sa.lon + (sb.lon - sa.lon) * f;
-            }
+        const stops = this.tripStops(r.trip_id);
+        if (stops.length < 2) continue;
+
+        // Find where the vehicle is at time t (schedule time, i.e. now minus delay).
+        const locate = (t: number) => {
+          let i = -1;
+          for (let k = 0; k < stops.length && stops[k].arr <= t; k++) i = k;
+          return i;
+        };
+        let delay = tu ? this.delayAt(stops, tu, base, 0) : undefined;
+        let i = locate(secs - (delay ?? 0));
+        if (tu && i + 1 < stops.length) {
+          // Use the prediction for the stop the vehicle is heading to.
+          const d2 = this.delayAt(stops, tu, base, i + 1);
+          if (d2 !== undefined && d2 !== delay) {
+            delay = d2;
+            i = locate(secs - delay);
           }
+        }
+        const t = secs - (delay ?? 0);
+        if (i < 0) {
+          if (stops[0].dep - t > 60) continue; // not started yet
+          i = 0;
+        }
+        const last = stops.length - 1;
+        if (i === last && t > stops[last].arr + 30) continue; // finished
+
+        const a = stops[Math.min(i, last)];
+        const b = stops[Math.min(i + 1, last)];
+        const f = t <= a.dep || b.arr <= a.dep ? 0 : Math.min(1, (t - a.dep) / (b.arr - a.dep));
+        const track = this.track(r.shape_id, stops);
+        let lat: number, lon: number, brg: number | undefined;
+        if (track) {
+          const ia = Math.min(i, last), ib = Math.min(i + 1, last);
+          const p = pointAt(track, track.stopDist[ia] + f * (track.stopDist[ib] - track.stopDist[ia]));
+          lat = p.lat;
+          lon = p.lon;
+          brg = p.bearing;
+        } else {
+          const sa = this.stops.get(a.stop_id), sb = this.stops.get(b.stop_id);
+          if (!sa || !sb) continue;
+          lat = sa.lat + (sb.lat - sa.lat) * f;
+          lon = sa.lon + (sb.lon - sa.lon) * f;
+          brg = a === b ? undefined : bearing(sa.lat, sa.lon, sb.lat, sb.lon);
         }
         out.push({
           id: r.trip_id,
@@ -381,12 +466,13 @@ export class GtfsStore {
           color: route.color,
           headsign: r.headsign || this.stops.get(r.last_stop)?.name,
           directionId: r.direction_id,
-          delay: delay ? d : undefined,
+          delay,
           ts: now,
           source: 'schedule',
         });
       }
     }
+    this.vehicleCache = { at: now, rt, list: out };
     return out;
   }
 
