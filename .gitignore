@@ -1,0 +1,7 @@
+node_modules/
+dist/
+server/data/
+.env
+*.local
+android/
+ios/
