@@ -190,8 +190,9 @@ ul.plain { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0
   position: absolute;
   left: 0; right: 0;
   bottom: calc(var(--tabbar-h) + var(--safe-b));
-  max-height: 58dvh;
+  height: 55dvh; /* overridden by the drag hook on phones */
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--surface);
   border-radius: 18px 18px 0 0;
   box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.18);
@@ -199,16 +200,32 @@ ul.plain { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0
   animation: sheet-in 0.2s ease-out;
 }
 @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
-.sheet-grip { width: 40px; height: 4px; border-radius: 2px; background: var(--border); margin: 8px auto 0; }
+/* Full-width drag handle with a small pill; tap toggles peek/half. */
+.sheet-grip {
+  position: sticky; top: 0; z-index: 2;
+  display: block; width: 100%; height: 22px;
+  border: 0; padding: 0;
+  background: var(--surface);
+  cursor: grab;
+  touch-action: none;
+}
+.sheet-grip::before {
+  content: ''; display: block;
+  width: 40px; height: 5px; margin: 8px auto 0;
+  border-radius: 3px; background: var(--border);
+}
+.sheet.dragging .sheet-grip { cursor: grabbing; }
+.sheet .sheet-head { touch-action: none; }
+.sheet.snap-peek { overflow: hidden; }
 .sheet-close {
-  position: sticky; top: 8px; float: right;
+  position: sticky; top: 26px; float: right;
   margin: 0 10px 0 0;
   width: 34px; height: 34px;
   border-radius: 50%;
   border: 0;
   background: var(--surface-2);
   color: var(--muted);
-  z-index: 1;
+  z-index: 3;
 }
 .sheet-body { padding: 0.5rem 1rem 1rem; }
 .sheet-head { display: grid; gap: 0.5rem; margin-bottom: 0.5rem; padding-right: 2.5rem; }
@@ -426,6 +443,8 @@ ul.plain { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0
     animation: none;
   }
   .sheet-grip { display: none; }
+  .sheet { height: auto; overflow-y: auto; }
+  .sheet .sheet-head { touch-action: auto; }
   .page { padding-top: 1rem; }
   .map-top { right: auto; width: min(480px, calc(100% - 1.5rem)); }
 }

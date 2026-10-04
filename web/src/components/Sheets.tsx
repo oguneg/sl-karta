@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Departure, Mode, Station, TripStopTime } from '../../../shared/types';
 import { api } from '../api/client';
 import { useNow, usePolling } from '../hooks';
@@ -7,20 +7,41 @@ import { useLocale, useT } from '../i18n';
 import { showStation, useUi } from '../store/ui';
 import { LineBadge, ModeIcon } from './Badges';
 import { DepartureRow, StopStar } from './Departures';
+import { useBottomSheet } from './useBottomSheet';
+
+/** Identifies what the sheet shows (not its live data), so the vehicle sheet's refreshes don't reset it. */
+function sheetKey(sheet: NonNullable<ReturnType<typeof useUi.getState>['sheet']>) {
+  switch (sheet.kind) {
+    case 'station': return `station:${sheet.id}`;
+    case 'vehicle': return `vehicle:${sheet.vehicle.id}`;
+    case 'route': return `route:${sheet.id}`;
+    case 'lines': return `lines:${sheet.routeIds.join(',')}`;
+  }
+}
 
 export function SheetHost() {
   const sheet = useUi((s) => s.sheet);
+  if (!sheet) return null;
+  return <Sheet sheet={sheet} />;
+}
+
+function Sheet({ sheet }: { sheet: NonNullable<ReturnType<typeof useUi.getState>['sheet']> }) {
   const close = useUi((s) => s.close);
   const t = useT();
+  const ref = useRef<HTMLElement>(null);
+  const { snap, setSnap, style, dragging } = useBottomSheet(ref, sheetKey(sheet));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [close]);
-  if (!sheet) return null;
   return (
-    <section className="sheet" role="dialog" aria-modal="false">
-      <div className="sheet-grip" aria-hidden="true" />
+    <section ref={ref} className={`sheet snap-${snap} ${dragging ? 'dragging' : ''}`} style={style} role="dialog" aria-modal="false">
+      <button
+        className="sheet-grip"
+        aria-label={snap === 'peek' ? t('sheet.expand') : t('sheet.collapse')}
+        onClick={() => setSnap(snap === 'peek' ? 'half' : 'peek')}
+      />
       <button className="sheet-close" onClick={close} aria-label={t('common.close')}>✕</button>
       {sheet.kind === 'station' && <StationSheet id={sheet.id} />}
       {sheet.kind === 'vehicle' && <VehicleSheet />}
