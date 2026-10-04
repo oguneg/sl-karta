@@ -36,8 +36,9 @@ main() {
   done
   echo "app: ${status:-unknown}"
 
-  # Remove old image layers so the disk doesn't fill up over many deploys.
+  # Remove old image layers and week-old build cache so the disk doesn't fill up over many deploys.
   docker image prune -f >/dev/null
+  docker builder prune -f --filter until=168h >/dev/null
 
   [ "$status" = "healthy" ] || return 1
   echo "$commit" > .deployed
