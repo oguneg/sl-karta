@@ -1,4 +1,7 @@
-import { GeolocateControl, Map as MlMap, setWorkerUrl, type GeoJSONSource, type MapLayerMouseEvent } from 'maplibre-gl';
+import {
+  GeolocateControl, Map as MlMap, setWorkerUrl,
+  type GeoJSONSource, type MapLayerMouseEvent, type MapMouseEvent, type PointLike,
+} from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useRef } from 'react';
@@ -409,6 +412,28 @@ export function MapView() {
       if (ids.length === 1) useUi.getState().open({ kind: 'route', id: ids[0] });
       else if (ids.length > 1) useUi.getState().open({ kind: 'lines', routeIds: ids });
     });
+    // Tap on empty map: close the sheet and return the map to normal. Waits briefly so the
+    // first tap of a double-tap zoom doesn't clear the selection; near-misses don't count.
+    let clearTimer: ReturnType<typeof setTimeout> | undefined;
+    map.on('click', (e: MapMouseEvent) => {
+      const pad = 12;
+      const box: [PointLike, PointLike] = [[e.point.x - pad, e.point.y - pad], [e.point.x + pad, e.point.y + pad]];
+      const layers = ['vehicles', 'stations', 'route-stops', 'network-hit'].filter((l) => map.getLayer(l));
+      if (map.queryRenderedFeatures(box, { layers }).length) return;
+      const ui = useUi.getState();
+      if (!ui.sheet && !ui.highlightRoute && !ui.trip) return;
+      clearTimeout(clearTimer);
+      const before = ui.sheet;
+      clearTimer = setTimeout(() => {
+        const s = useUi.getState();
+        if (s.sheet !== before) return; // something else was selected meanwhile
+        s.close();
+        s.setTrip(undefined);
+        s.setHighlight(undefined);
+      }, 300);
+    });
+    map.on('dblclick', () => clearTimeout(clearTimer));
+
     for (const layer of ['vehicles', 'stations', 'route-stops', 'network-hit']) {
       map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'));
       map.on('mouseleave', layer, () => (map.getCanvas().style.cursor = ''));
@@ -426,6 +451,7 @@ export function MapView() {
       document.removeEventListener('visibilitychange', onVis);
       clearTimeout(vehTimer);
       clearTimeout(moveTimer);
+      clearTimeout(clearTimer);
       cancelAnimationFrame(rafRef.current);
       vehCtrl?.abort();
       map.remove();
