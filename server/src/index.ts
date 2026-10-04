@@ -1,5 +1,7 @@
 import Fastify, { type FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import fs from 'node:fs';
 import type { Meta, PlanRequest, Vehicle } from '../../shared/types.ts';
 import { config } from './config.ts';
 import { DataManager } from './data.ts';
@@ -152,6 +154,23 @@ app.post<{ Body: PlanRequest }>('/api/plan', async (req, reply) => {
   }
   return store.plan(body, rt);
 });
+
+// Serve the built web app (web/dist) when present, so one container serves site + API.
+if (fs.existsSync(config.webDist)) {
+  await app.register(fastifyStatic, {
+    root: config.webDist,
+    wildcard: false,
+    cacheControl: false,
+    setHeaders: (res, file) => {
+      // Hashed build assets never change; HTML must always be revalidated so deploys show up.
+      res.header('Cache-Control', /[\\/]assets[\\/]/.test(file) ? 'public, max-age=31536000, immutable' : 'no-cache');
+    },
+  });
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api/') || req.method !== 'GET') return reply.code(404).send({ error: 'not_found' });
+    return reply.type('text/html').sendFile('index.html');
+  });
+}
 
 await app.listen({ port: config.port, host: config.host });
 console.log(`SL Karta API on http://localhost:${config.port} (${config.demo ? 'DEMO network' : 'Trafiklab GTFS'})`);

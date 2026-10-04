@@ -1,0 +1,35 @@
+# Production: docker compose up -d --build
+# Needs server/.env (Trafiklab keys) and .env with DOMAIN=your.domain (see .env.example).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: server/.env
+    environment:
+      DATA_DIR: /data
+      API_PORT: 8787
+    volumes:
+      - sl-data:/data
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sl-data:
+  caddy-data:
+  caddy-config:

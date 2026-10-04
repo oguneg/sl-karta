@@ -105,7 +105,36 @@ All monetisation goes through `web/src/platform/monetization.ts` (no-op on web t
 
 Plug in e.g. `@capacitor-community/admob` and RevenueCat there once the model is decided.
 
-## Deploying the server
+## Deploying (VPS with Docker)
 
-Any Node 22+ host with a persistent disk for `server/data` (~1 GB for the SL database) works, e.g.
-Fly.io, Railway, Render or a small VPS. Run `npm start -w server` and set the env vars from `.env.example`.
+One container serves both the website and the API. [Caddy](https://caddyserver.com) sits in front and gets
+HTTPS certificates automatically. Needs ~2 GB RAM for the timetable import and ~2 GB disk.
+
+**1. DNS.** At your domain registrar, add an **A record** for the (sub)domain, e.g. `sl`, pointing to the
+VPS's IPv4 address. Wait until `ping sl.ogun.se` answers from that IP.
+
+**2. Keys.** Create a *second* pair of Trafiklab keys for the server, so your PC and production don't share
+quotas (static data allows only 50 downloads/month per key).
+
+**3. On the VPS** (ports 80 and 443 must be open):
+
+```bash
+git clone https://github.com/oguneg/sl-karta.git
+cd sl-karta
+cp .env.example .env                 # set DOMAIN=sl.ogun.se
+cp server/.env.example server/.env   # paste the server's Trafiklab keys
+docker compose up -d --build
+docker compose logs -f app           # first start: downloads + imports SL data (~1-2 min)
+```
+
+Then open `https://sl.ogun.se`.
+
+**Update** after pushing new code:
+
+```bash
+cd sl-karta && git pull && docker compose up -d --build
+```
+
+The SL database lives in the `sl-data` Docker volume and survives rebuilds; it refreshes itself daily.
+
+For the mobile apps, build the web app with `VITE_API_BASE=https://sl.ogun.se`.
