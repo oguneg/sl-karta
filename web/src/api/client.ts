@@ -30,7 +30,9 @@ export const api = {
   nearby: (lat: number, lon: number, radius = 800, s?: AbortSignal) =>
     get<Station[]>(`/stations/nearby?lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&radius=${radius}`, s),
   stationsInBox: (bbox: BBox, s?: AbortSignal) => get<Station[]>(`/stations/box?bbox=${bboxParam(bbox)}`, s),
-  search: (q: string, s?: AbortSignal) => get<Station[]>(`/stations/search?q=${encodeURIComponent(q)}`, s),
+  search: (q: string, s?: AbortSignal) =>
+    get<{ lines: RouteInfo[]; stations: Station[] }>(`/search?q=${encodeURIComponent(q)}`, s),
+  popular: (s?: AbortSignal) => get<Station[]>('/stations/popular', s),
   station: (id: string, s?: AbortSignal) => get<Station>(`/stations/${encodeURIComponent(id)}`, s),
   departures: (
     id: string,

@@ -38,6 +38,9 @@ interface ActiveTrip {
 
 interface TripStop { seq: number; stop_id: string; arr: number; dep: number }
 
+// Same-named stops this close form one place (Slussen's bus terminals are ~540 m from the metro).
+const PLACE_RADIUS_M = 650;
+
 const MODE_ORDER: Mode[] = ['metro', 'train', 'tram', 'bus', 'ship', 'other'];
 
 const normalize = (s: string) =>
@@ -64,6 +67,8 @@ export class GtfsStore {
   private trackCache = new Map<string, Track | null>();
   private activeCache = new Map<string, ActiveTrip[]>();
   private networkCache?: GeoJSON.FeatureCollection;
+  private byName = new Map<string, StationRec[]>();
+  private placeCache = new Map<string, StationRec[]>();
   private vehicleCache?: { at: number; rt?: RealtimeLookup; list: Vehicle[] };
   private q: Record<string, StatementSync> = {};
 
@@ -154,6 +159,11 @@ export class GtfsStore {
       st.lines = lines;
       st.modes = [...new Set(lines.map((l) => l.mode))].sort((a, b) => MODE_ORDER.indexOf(a) - MODE_ORDER.indexOf(b));
     }
+    for (const st of this.stations.values()) {
+      const list = this.byName.get(st.search);
+      if (list) list.push(st);
+      else this.byName.set(st.search, [st]);
+    }
   }
 
   /** Service IDs running on a given YYYYMMDD date. */
@@ -186,9 +196,46 @@ export class GtfsStore {
       { mode: a.mode, line: a.line } as StationLine, { mode: b.mode, line: b.line } as StationLine));
   }
 
+  private rec(id: string) {
+    return this.stations.get(id) ?? this.stations.get(this.stops.get(id)?.stationId ?? '');
+  }
+
+  /**
+   * A place: the station plus same-named stations within PLACE_RADIUS_M (e.g. Slussen's metro station,
+   * bus terminals and boat pier). People think in places, so search, nearby and departure boards
+   * work per place; map markers stay per physical station.
+   */
+  private place(s: StationRec): StationRec[] {
+    let p = this.placeCache.get(s.id);
+    if (!p) {
+      p = (this.byName.get(s.search) ?? [s]).filter((o) => o === s || haversine(s.lat, s.lon, o.lat, o.lon) <= PLACE_RADIUS_M);
+      this.placeCache.set(s.id, p);
+    }
+    return p;
+  }
+
+  /** Public view of a place, keeping the given station's id, name and position. */
+  private placeStation(s: StationRec): Station {
+    const group = this.place(s);
+    if (group.length === 1) return publicStation(s);
+    const lines = new Map<string, StationLine>();
+    for (const g of group) for (const l of g.lines) lines.set(l.routeId, l);
+    const merged = [...lines.values()].sort(compareLines);
+    return {
+      ...publicStation(s),
+      lines: merged,
+      modes: [...new Set(merged.map((l) => l.mode))].sort((a, b) => MODE_ORDER.indexOf(a) - MODE_ORDER.indexOf(b)),
+    };
+  }
+
+  /** Platform/stop ids of a whole place. */
+  private placeStops(s: StationRec) {
+    return this.place(s).flatMap((g) => g.childIds);
+  }
+
   station(id: string): Station | undefined {
-    const s = this.stations.get(id) ?? this.stations.get(this.stops.get(id)?.stationId ?? '');
-    return s && publicStation(s);
+    const s = this.rec(id);
+    return s && this.placeStation(s);
   }
 
   nearby(lat: number, lon: number, radius = 800, limit = 25): Station[] {
@@ -199,7 +246,8 @@ export class GtfsStore {
       const d = haversine(lat, lon, s.lat, s.lon);
       if (d <= radius) out.push({ ...publicStation(s), distance: Math.round(d) });
     }
-    return out.sort((a, b) => a.distance! - b.distance!).slice(0, limit);
+    out.sort((a, b) => a.distance! - b.distance!);
+    return this.dedupePlaces(out).slice(0, limit);
   }
 
   /** Stations inside a bounding box (for drawing stop markers on the map). */
@@ -226,7 +274,54 @@ export class GtfsStore {
         - (s.modes.includes('metro') || s.modes.includes('train') ? 100 : 0) - s.lines.length;
       scored.push([score, s]);
     }
-    return scored.sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name, 'sv')).slice(0, limit).map(([, s]) => publicStation(s));
+    scored.sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name, 'sv'));
+    return this.dedupePlaces(scored.map(([, s]) => publicStation(s))).slice(0, limit);
+  }
+
+  /** Keep the first station of each place (input is already ranked) and give it the place's lines. */
+  private dedupePlaces(list: Station[]): Station[] {
+    const seen = new Set<string>();
+    const out: Station[] = [];
+    for (const st of list) {
+      if (seen.has(st.id)) continue;
+      const rec = this.stations.get(st.id)!;
+      for (const g of this.place(rec)) seen.add(g.id);
+      out.push({ ...this.placeStation(rec), distance: st.distance });
+    }
+    return out;
+  }
+
+  /** Lines matching a search: by number ("14", "176x") or name ("tvärbanan", "röda"). */
+  searchLines(query: string, limit = 8): RouteInfo[] {
+    const q = normalize(query);
+    if (!q) return [];
+    const scored: [number, RouteInfo][] = [];
+    for (const r of this.routes.values()) {
+      const line = normalize(r.line), name = normalize(r.name);
+      let score: number;
+      if (line === q) score = 0;
+      else if (line.startsWith(q)) score = 1;
+      else if (q.length >= 3 && name.includes(q)) score = 2;
+      else continue;
+      scored.push([score * 10 + MODE_ORDER.indexOf(r.mode), r]);
+    }
+    return scored
+      .sort((a, b) => a[0] - b[0] || compareLines(a[1], b[1]))
+      .slice(0, limit)
+      .map(([, r]) => (r.name ? r : { ...r, name: this.endpoints(r.id) ?? '' }));
+  }
+
+  /** "A – B" from a line's two directions, for lines without a name (most buses). */
+  private endpoints(routeId: string) {
+    const heads = [...new Set((this.routeDetail(routeId)?.directions ?? []).map((d) => d.headsign).filter(Boolean))];
+    return heads.length ? heads.join(' – ') : undefined;
+  }
+
+  /** Quick-access hubs, resolved to the best-matching station for each name. */
+  popular(names: string[]): Station[] {
+    return names
+      .map((n) => this.search(n, 1)[0])
+      .filter((s): s is Station => !!s);
   }
 
   private realtimeFor(rt: RealtimeLookup | undefined, tripId: string, seq: number, stopId: string, scheduledAbs: number, kind: 'dep' | 'arr') {
@@ -264,9 +359,11 @@ export class GtfsStore {
     minutes = 60,
     opts: { routeId?: string; directionId?: number; limit?: number; rt?: RealtimeLookup } = {},
   ): DepInternal[] {
-    const st = this.stations.get(stationId) ?? this.stations.get(this.stops.get(stationId)?.stationId ?? '');
-    if (!st || st.childIds.length === 0) return [];
-    const ph = st.childIds.map(() => '?').join(',');
+    const st = this.rec(stationId);
+    if (!st) return [];
+    const stopIds = this.placeStops(st);
+    if (stopIds.length === 0) return [];
+    const ph = stopIds.map(() => '?').join(',');
     const extra = opts.routeId ? ' AND t.route_id = ?' + (opts.directionId !== undefined ? ' AND t.direction_id = ?' : '') : '';
     const stmt = this.db.prepare(
       `SELECT st.trip_id, st.seq, st.stop_id, st.dep, t.route_id, t.service_id, t.headsign, t.direction_id, tb.last_stop
@@ -283,7 +380,7 @@ export class GtfsStore {
       const lo = from - base - lookback, hi = from + minutes * 60 - base;
       if (hi < 0) continue;
       const services = this.activeServices(day);
-      const params: (string | number)[] = [...st.childIds, lo, hi];
+      const params: (string | number)[] = [...stopIds, lo, hi];
       if (opts.routeId) {
         params.push(opts.routeId);
         if (opts.directionId !== undefined) params.push(opts.directionId);
@@ -326,9 +423,9 @@ export class GtfsStore {
 
   /** Arrival time of `tripId` at any stop of `stationId` after stop sequence `afterSeq`. */
   arrival(tripId: string, afterSeq: number, stationId: string, serviceBase: number, rt?: RealtimeLookup) {
-    const st = this.stations.get(stationId);
+    const st = this.rec(stationId);
     if (!st) return undefined;
-    const children = new Set(st.childIds);
+    const children = new Set(this.placeStops(st));
     for (const r of this.q.tripStops.all(tripId) as { seq: number; stop_id: string; arr: number }[]) {
       if (r.seq <= afterSeq || !children.has(r.stop_id)) continue;
       const scheduled = serviceBase + r.arr;

@@ -24,7 +24,7 @@ export function SheetHost() {
       <button className="sheet-close" onClick={close} aria-label={t('common.close')}>✕</button>
       {sheet.kind === 'station' && <StationSheet id={sheet.id} />}
       {sheet.kind === 'vehicle' && <VehicleSheet />}
-      {sheet.kind === 'route' && <RouteSheet id={sheet.id} directionId={sheet.directionId} />}
+      {sheet.kind === 'route' && <RouteSheet id={sheet.id} directionId={sheet.directionId} fit={sheet.fit} />}
       {sheet.kind === 'lines' && <LinePicker routeIds={sheet.routeIds} />}
     </section>
   );
@@ -39,19 +39,26 @@ function groupByMode(deps: Departure[]) {
   return [...m.entries()];
 }
 
+/** Above this many bus lines, bus chips are folded behind a toggle. */
+const BUS_CHIPS = 8;
+
 function StationSheet({ id }: { id: string }) {
   const t = useT();
   const now = useNow(10_000);
   const [station, setStation] = useState<Station>();
   const [filter, setFilter] = useState<string>();
+  const [showAllLines, setShowAllLines] = useState(false);
   const setHighlight = useUi((s) => s.setHighlight);
   useEffect(() => {
     setFilter(undefined);
+    setShowAllLines(false);
     const c = new AbortController();
     api.station(id, c.signal).then(setStation).catch(() => {});
     return () => c.abort();
   }, [id]);
-  const { data: deps, error } = usePolling((s) => api.departures(id, { minutes: 90, limit: 60 }, s), 20_000, [id]);
+  // Big hubs (a "place" merges metro, bus terminals and piers) can have dozens of bus lines.
+  const busCount = station?.lines.filter((l) => l.mode === 'bus').length ?? 0;
+  const { data: deps, error } = usePolling((s) => api.departures(id, { minutes: 90, limit: 120 }, s), 20_000, [id]);
   const shown = useMemo(() => (deps ?? []).filter((d) => !filter || d.routeId === filter), [deps, filter]);
   const groups = groupByMode(shown);
 
@@ -60,7 +67,7 @@ function StationSheet({ id }: { id: string }) {
       <header className="sheet-head">
         <h2>{station?.name ?? '…'}</h2>
         <div className="chips">
-          {station?.lines.map((l) => (
+          {station?.lines.filter((l) => showAllLines || l.mode !== 'bus' || l.routeId === filter || busCount <= BUS_CHIPS).map((l) => (
             <button
               key={l.routeId}
               className={`chip-line ${filter === l.routeId ? 'on' : ''}`}
@@ -73,6 +80,11 @@ function StationSheet({ id }: { id: string }) {
               <LineBadge line={l.line} color={l.color} textColor={l.textColor} mode={l.mode} size="sm" />
             </button>
           ))}
+          {busCount > BUS_CHIPS && (
+            <button className="chip-more" onClick={() => setShowAllLines(!showAllLines)}>
+              {showAllLines ? t('line.fewer') : t('line.moreBuses', { n: busCount })}
+            </button>
+          )}
         </div>
       </header>
       {error && !deps ? <p className="empty">{t('status.offline')}</p> : null}
@@ -206,10 +218,18 @@ function VehicleSheet() {
   );
 }
 
-function RouteSheet({ id, directionId }: { id: string; directionId?: number }) {
+function RouteSheet({ id, directionId, fit }: { id: string; directionId?: number; fit?: boolean }) {
   const t = useT();
   const setHighlight = useUi((s) => s.setHighlight);
   const { data: route } = usePolling((s) => api.route(id, s), 3600_000, [id]);
+  // Opened from search: frame the whole line.
+  useEffect(() => {
+    if (!fit || !route) return;
+    const pts = route.directions.flatMap((d) => d.shape);
+    if (!pts.length) return;
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    useUi.getState().fit([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+  }, [fit, route]);
   const [dir, setDir] = useState(directionId ?? 0);
   useEffect(() => {
     setHighlight(id);

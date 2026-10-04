@@ -6,7 +6,7 @@ export type Tab = 'map' | 'nearby' | 'favorites' | 'plan' | 'settings';
 export type Sheet =
   | { kind: 'station'; id: string }
   | { kind: 'vehicle'; vehicle: Vehicle }
-  | { kind: 'route'; id: string; directionId?: number }
+  | { kind: 'route'; id: string; directionId?: number; fit?: boolean }
   /** Several lines share the tapped track: let the user pick one. */
   | { kind: 'lines'; routeIds: string[] }
   | null;
@@ -19,6 +19,8 @@ interface UiState {
   /** Selected vehicle's journey, drawn on the map instead of the generic line. */
   trip?: TripDetail;
   flyTo?: { lat: number; lon: number; zoom?: number; seq: number };
+  /** Request to frame a bounding box [minLon, minLat, maxLon, maxLat]. */
+  fitTo?: { bbox: [number, number, number, number]; seq: number };
   meta?: Meta;
   offline: boolean;
   setTab(t: Tab): void;
@@ -27,6 +29,7 @@ interface UiState {
   setHighlight(routeId?: string): void;
   setTrip(trip?: TripDetail): void;
   fly(lat: number, lon: number, zoom?: number): void;
+  fit(bbox: [number, number, number, number]): void;
   setMeta(m?: Meta, offline?: boolean): void;
 }
 
@@ -39,6 +42,7 @@ export const useUi = create<UiState>()((set) => ({
   close: () => set({ sheet: null }),
   setHighlight: (highlightRoute) => set({ highlightRoute }),
   setTrip: (trip) => set({ trip }),
+  fit: (bbox) => set((s) => ({ fitTo: { bbox, seq: (s.fitTo?.seq ?? 0) + 1 } })),
   fly: (lat, lon, zoom) => set((s) => ({ flyTo: { lat, lon, zoom, seq: (s.flyTo?.seq ?? 0) + 1 } })),
   setMeta: (meta, offline = false) => set({ meta, offline }),
 }));

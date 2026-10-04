@@ -121,6 +121,26 @@ app.get<{ Querystring: { lat: string; lon: string; radius?: string } }>('/api/st
   return store.nearby(lat, lon, Math.min(num(req.query.radius, 800)!, 3000));
 });
 
+/** Big interchanges for the quick-access buttons in the search box. */
+const POPULAR = [
+  'T-Centralen', 'Stockholm City', 'Odenplan', 'Slussen', 'Gullmarsplan', 'Fridhemsplan',
+  'Medborgarplatsen', 'Tekniska högskolan', 'Liljeholmen', 'Stockholms södra', 'Kista', 'Arlanda central',
+];
+
+app.get('/api/stations/popular', async (_req, reply) => {
+  const store = requireStore(reply);
+  if (!store) return;
+  reply.header('Cache-Control', 'public, max-age=3600');
+  return store.popular(POPULAR);
+});
+
+app.get<{ Querystring: { q: string } }>('/api/search', async (req, reply) => {
+  const store = requireStore(reply);
+  if (!store) return;
+  const q = req.query.q ?? '';
+  return { lines: store.searchLines(q), stations: store.search(q, 12) };
+});
+
 app.get<{ Querystring: { bbox: string } }>('/api/stations/box', async (req, reply) => {
   const store = requireStore(reply);
   if (!store) return;

@@ -200,6 +200,7 @@ export function MapView() {
   const highlight = useUi((s) => s.highlightRoute);
   const trip = useUi((s) => s.trip);
   const flyTo = useUi((s) => s.flyTo);
+  const fitTo = useUi((s) => s.fitTo);
   const renderRef = useRef<() => void>(() => {});
   const loadRouteRef = useRef<() => Promise<void>>(undefined);
   const themeRef = useRef(theme);
@@ -448,6 +449,20 @@ export function MapView() {
   useEffect(() => {
     void loadRouteRef.current?.();
   }, [highlight, trip]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!fitTo || !map) return;
+    const [a, b, c, d] = fitTo.bbox;
+    // Leave room for the search bar on top and, on phones, the bottom sheet.
+    const h = map.getContainer().clientHeight;
+    const mobile = window.innerWidth < 900;
+    map.fitBounds([[a, b], [c, d]], {
+      padding: { top: 110, left: 30, right: 30, bottom: mobile ? Math.round(h * 0.55) : 40 },
+      maxZoom: 15,
+      duration: 800,
+    });
+  }, [fitTo]);
 
   useEffect(() => {
     if (flyTo) mapRef.current?.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: flyTo.zoom ?? Math.max(14, mapRef.current.getZoom()) });
