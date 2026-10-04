@@ -14,7 +14,7 @@ import { useBottomSheet } from './useBottomSheet';
 function sheetKey(sheet: NonNullable<ReturnType<typeof useUi.getState>['sheet']>) {
   switch (sheet.kind) {
     case 'station': return `station:${sheet.id}`;
-    case 'vehicle': return `vehicle:${sheet.vehicle.id}`;
+    case 'vehicle': return `vehicle:${sheet.tripId}`;
     case 'route': return `route:${sheet.id}`;
     case 'lines': return `lines:${sheet.routeIds.join(',')}`;
   }
@@ -163,41 +163,78 @@ export function SkeletonRows({ n = 5 }: { n?: number }) {
   );
 }
 
+/**
+ * One vehicle's journey. Opened from the map (a vehicle) or from a stop's departure list (a trip
+ * plus the stop it was opened from, `focusStopId`): then the map flies to the vehicle and the list
+ * runs from where it is now to that stop, which is emphasised; later stops fold away.
+ */
 function VehicleSheet() {
   const t = useT();
   const locale = useLocale();
   const now = useNow(10_000);
   const sheet = useUi((s) => s.sheet);
   const { open, setHighlight, setTrip } = useUi.getState();
-  const [showPassed, setShowPassed] = useState(false);
-  const v = sheet?.kind === 'vehicle' ? sheet.vehicle : undefined;
-  const tripId = v?.tripId;
+  const vs = sheet?.kind === 'vehicle' ? sheet : undefined;
+  const v = vs?.vehicle;
+  const tripId = vs?.tripId;
+  const focusStopId = vs?.focusStopId;
   const { data: trip, error } = usePolling(tripId ? (s) => api.trip(tripId, s) : null, 20_000, [tripId]);
+  const routeId = trip?.routeId ?? v?.routeId;
+  const [showPassed, setShowPassed] = useState(false);
+  const [showLater, setShowLater] = useState(false);
 
-  // Selecting a vehicle shows its line and journey on the map; clear both when the sheet closes.
+  // Show the line and this journey on the map; clear both when the sheet closes.
   useEffect(() => {
-    setHighlight(v?.routeId);
-    setShowPassed(false);
+    setHighlight(routeId);
     return () => {
       setTrip(undefined);
       setHighlight(undefined);
     };
-  }, [tripId, v?.routeId, setHighlight, setTrip]);
+  }, [tripId, routeId, setHighlight, setTrip]);
   useEffect(() => setTrip(trip), [trip, setTrip]);
+  useEffect(() => {
+    setShowPassed(false);
+    setShowLater(false);
+  }, [tripId]);
 
-  if (!v) return null;
-  const delay = trip?.delay ?? v.delay;
+  // Opened from a stop: bring the vehicle into view once.
+  const flownFor = useRef<string>(undefined);
+  useEffect(() => {
+    if (!focusStopId || !trip?.position || flownFor.current === tripId) return;
+    flownFor.current = tripId;
+    useUi.getState().fly(trip.position.lat, trip.position.lon, 14);
+  }, [focusStopId, trip, tripId]);
+
+  if (!vs) return null;
+  const line = trip?.line ?? v?.line ?? '?';
+  const color = trip?.color ?? v?.color ?? '#6b7280';
+  const mode = trip?.mode ?? v?.mode ?? 'bus';
+  const delay = trip?.delay ?? v?.delay;
   const delayMin = delay !== undefined ? Math.round(delay / 60) : undefined;
-  const passed = trip ? trip.stops.slice(0, trip.nextIndex) : [];
-  const upcoming = trip ? trip.stops.slice(trip.nextIndex) : [];
-  const next = upcoming[0];
   const when = (s: TripStopTime) => s.expected ?? s.scheduled;
 
-  const stopRow = (s: TripStopTime, i: number, isNext = false) => {
+  const stops = trip?.stops ?? [];
+  const nextIndex = trip?.nextIndex ?? 0;
+  // The stop we came from: its occurrence at or after the vehicle's position, else any.
+  let focus = -1;
+  if (focusStopId) {
+    focus = stops.findIndex((s, k) => k >= nextIndex && s.stopId === focusStopId);
+    if (focus < 0) focus = stops.findIndex((s) => s.stopId === focusStopId);
+  }
+  const focusAhead = focus >= nextIndex;
+  const passed = stops.slice(0, nextIndex);
+  const ahead = stops.slice(nextIndex, focusAhead ? focus + 1 : undefined);
+  const later = focusAhead ? stops.slice(focus + 1) : [];
+  const next = stops[nextIndex];
+  const target = focusAhead ? stops[focus] : undefined;
+  const stopsAway = focus - nextIndex + 1;
+
+  const stopRow = (s: TripStopTime, k: number) => {
     const late = s.expected !== undefined && Math.abs(s.expected - s.scheduled) >= 60;
     const mins = Math.floor((when(s) - now) / 60); // same rounding as countdown()
+    const cls = [s.passed && 'passed', k === nextIndex && 'next', k === focus && 'focus', s.canceled && 'canceled'].filter(Boolean).join(' ');
     return (
-      <li key={s.stopId + i} className={`${s.passed ? 'passed' : ''} ${isNext ? 'next' : ''} ${s.canceled ? 'canceled' : ''}`}>
+      <li key={s.stopId + k} className={cls}>
         <button onClick={() => showStation(s.stationId, s.lat, s.lon)}>
           <span className="trip-stop-name">
             {s.name}
@@ -212,15 +249,20 @@ function VehicleSheet() {
       </li>
     );
   };
+  const toggle = (label: string, onClick: () => void) => (
+    <li className="trip-toggle"><button onClick={onClick}>{label}</button></li>
+  );
 
+  // The card at the top: your stop when opened from one, otherwise the next stop.
+  const card = target ?? next;
   return (
     <div className="sheet-body">
       <header className="sheet-head row">
-        <LineBadge line={v.line ?? '?'} color={v.color} textColor={trip?.textColor} mode={v.mode} size="lg" />
+        <LineBadge line={line} color={color} textColor={trip?.textColor} mode={mode} size="lg" />
         <div>
-          <h2>{t('vehicle.towards', { h: trip?.headsign ?? v.headsign ?? '' })}</h2>
+          <h2>{t('vehicle.towards', { h: trip?.headsign ?? v?.headsign ?? '' })}</h2>
           <p className="muted small">
-            {t(`mode.${v.mode}`)} · {v.source === 'gps' ? t('vehicle.gps') : t('vehicle.estimated')}
+            {t(`mode.${mode}`)} · {v?.source === 'gps' ? t('vehicle.gps') : t('vehicle.estimated')}
             {delayMin !== undefined && (delayMin === 0
               ? <> · <span className="rt">{t('trip.onTime')}</span></>
               : delayMin > 0
@@ -232,35 +274,42 @@ function VehicleSheet() {
 
       {!tripId || (error && !trip) ? <p className="empty">{t('trip.unavailable')}</p> : null}
       {tripId && !trip && !error && <SkeletonRows n={4} />}
+      {focusStopId && trip && focus >= 0 && !focusAhead && (
+        <p className="notice small">{t('trip.left', { name: stops[focus].name })}</p>
+      )}
 
-      {next && (
-        <button className="trip-next" onClick={() => showStation(next.stationId, next.lat, next.lon)} style={{ ['--line' as string]: v.color }}>
-          <span className="trip-next-label"><span className="line-dot" aria-hidden="true" />{t('trip.next')}</span>
-          <strong className="trip-next-name">{next.name}</strong>
+      {card && (
+        <button className="trip-next" onClick={() => showStation(card.stationId, card.lat, card.lon)} style={{ ['--line' as string]: color }}>
+          <span className="trip-next-label">
+            <span className="line-dot" aria-hidden="true" />
+            {target ? t('trip.yourStop') : t('trip.next')}
+            {target && <span>· {stopsAway <= 1 ? t('trip.isNext') : t('trip.stopsAway', { n: stopsAway })}</span>}
+          </span>
+          <strong className="trip-next-name">{card.name}</strong>
           <span className="trip-next-time">
-            <strong className={next.expected !== undefined ? 'rt' : ''}>{countdown(when(next), t, locale, now)}</strong>
-            <span className="muted small">{clock(when(next), locale)}</span>
+            <strong className={card.expected !== undefined ? 'rt' : ''}>{countdown(when(card), t, locale, now)}</strong>
+            <span className="muted small">{clock(when(card), locale)}</span>
           </span>
         </button>
       )}
 
       {trip && (
         <ol className="trip-stops" style={{ ['--line' as string]: trip.color }}>
-          {passed.length > 0 && (
-            <li className="trip-toggle">
-              <button onClick={() => setShowPassed(!showPassed)}>
-                {showPassed ? t('trip.hideEarlier') : t('trip.earlier', { n: passed.length })}
-              </button>
-            </li>
+          {passed.length > 0 && toggle(showPassed ? t('trip.hideEarlier') : t('trip.earlier', { n: passed.length }), () => setShowPassed(!showPassed))}
+          {(showPassed || (focus >= 0 && !focusAhead)) && passed.map((s, i) => stopRow(s, i))}
+          {ahead.map((s, i) => stopRow(s, nextIndex + i))}
+          {later.length > 0 && (
+            <>
+              {showLater && later.map((s, i) => stopRow(s, focus + 1 + i))}
+              {toggle(showLater ? t('trip.hideLater') : t('trip.later', { n: later.length }), () => setShowLater(!showLater))}
+            </>
           )}
-          {showPassed && passed.map((s, i) => stopRow(s, i))}
-          {upcoming.map((s, i) => stopRow(s, passed.length + i, i === 0))}
         </ol>
       )}
 
-      {v.routeId && (
+      {routeId && (
         <div className="actions">
-          <button className="btn" onClick={() => open({ kind: 'route', id: v.routeId!, directionId: v.directionId })}>
+          <button className="btn" onClick={() => open({ kind: 'route', id: routeId, directionId: trip?.directionId ?? v?.directionId })}>
             {t('trip.wholeLine')}
           </button>
         </div>

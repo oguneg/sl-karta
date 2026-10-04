@@ -135,6 +135,8 @@ export interface TripDetail {
   nextIndex: number;
   stops: TripStopTime[];
   shape: [number, number][]; // [lon, lat]
+  /** Current (estimated) position of the vehicle. */
+  position?: { lat: number; lon: number; bearing?: number };
 }
 
 /**

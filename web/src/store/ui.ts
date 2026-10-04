@@ -5,7 +5,7 @@ export type Tab = 'map' | 'nearby' | 'favorites' | 'plan' | 'settings';
 
 export type Sheet =
   | { kind: 'station'; id: string }
-  | { kind: 'vehicle'; vehicle: Vehicle }
+  | { kind: 'vehicle'; tripId: string; vehicle?: Vehicle; focusStopId?: string }
   | { kind: 'route'; id: string; directionId?: number; fit?: boolean }
   /** Several lines share the tapped track: let the user pick one. */
   | { kind: 'lines'; routeIds: string[] }

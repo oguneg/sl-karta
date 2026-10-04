@@ -67,7 +67,7 @@ export function DepartureRow({ dep, now, station, showStar = true }: {
   const delay = delayLabel(dep, t);
   const open = useUi((s) => s.open);
   return (
-    <li className={`dep ${dep.canceled ? 'canceled' : ''}`} onClick={() => open({ kind: 'route', id: dep.routeId, directionId: dep.directionId })}>
+    <li className={`dep ${dep.canceled ? 'canceled' : ''}`} onClick={() => open({ kind: 'vehicle', tripId: dep.tripId, focusStopId: dep.stopId })}>
       <LineBadge line={dep.line} color={dep.color} textColor={dep.textColor} mode={dep.mode} />
       <div className="dep-main">
         <div className="dep-head">{dep.headsign}</div>

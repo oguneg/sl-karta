@@ -514,6 +514,9 @@ ul.plain { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0
 .trip-stops li.passed { color: var(--muted); }
 .trip-stops li.next::before { width: 14px; height: 14px; margin-top: -7px; left: -1.17rem; background: var(--line); }
 .trip-stops li.next .trip-stop-name { font-weight: 700; }
+.trip-stops li.focus > button { background: color-mix(in srgb, var(--line) 12%, transparent); }
+.trip-stops li.focus .trip-stop-name { font-weight: 700; }
+.trip-stops li.focus::before { width: 16px; height: 16px; margin-top: -8px; left: -1.22rem; border-width: 4px; }
 .trip-stops li.canceled .trip-stop-name, .trip-stops li.canceled strong { text-decoration: line-through; color: var(--muted); }
 .trip-stops button {
   width: 100%;

@@ -330,7 +330,10 @@ export function MapView() {
         animRef.current = anim;
         // Keep the open vehicle sheet in sync.
         const sheet = useUi.getState().sheet;
-        if (sheet?.kind === 'vehicle' && next.has(sheet.vehicle.id)) useUi.getState().open({ kind: 'vehicle', vehicle: next.get(sheet.vehicle.id)! });
+        if (sheet?.kind === 'vehicle') {
+          const live = vehicles.find((x) => (x.tripId ?? x.id) === sheet.tripId);
+          if (live) useUi.getState().open({ ...sheet, vehicle: live });
+        }
         cancelAnimationFrame(rafRef.current);
         animStart.current = performance.now();
         rafRef.current = requestAnimationFrame(animate);
@@ -425,7 +428,7 @@ export function MapView() {
       const id = e.features?.[0]?.properties?.id as string | undefined;
       const v = id && vehiclesRef.current.get(id);
       if (!v) return;
-      useUi.getState().open({ kind: 'vehicle', vehicle: v });
+      useUi.getState().open({ kind: 'vehicle', tripId: v.tripId ?? v.id, vehicle: v });
       // On phones the sheet covers the lower half: keep the vehicle in view above it.
       const h = map.getContainer().clientHeight;
       const mobile = window.innerWidth < 900;
@@ -524,7 +527,11 @@ export function MapView() {
   }, [fitTo]);
 
   useEffect(() => {
-    if (flyTo) mapRef.current?.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: flyTo.zoom ?? Math.max(14, mapRef.current.getZoom()) });
+    const map = mapRef.current;
+    if (!flyTo || !map) return;
+    // On phones the bottom sheet covers the lower half: centre the target in the visible part.
+    const bottom = window.innerWidth < 900 ? Math.round(map.getContainer().clientHeight * 0.5) : 0;
+    map.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: flyTo.zoom ?? Math.max(14, map.getZoom()), padding: { top: 0, left: 0, right: 0, bottom } });
   }, [flyTo]);
 
   return <div ref={el} className="map" />;

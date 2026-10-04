@@ -648,6 +648,30 @@ export class GtfsStore {
       nextIndex: Math.max(0, out.findIndex((x) => !x.passed)),
       stops: out,
       shape: track ? track.coords : out.map((s) => [s.lon, s.lat] as [number, number]),
+      // Where the vehicle is now (at its first stop if it hasn't left yet).
+      position: this.positionOn(stops, track ?? undefined, i, now - base - (delay ?? 0)),
+    };
+  }
+
+  /**
+   * Position at schedule time `t` (seconds since service midnight, delay already removed), given the
+   * index `i` of the last stop reached: on the track shape when available, else a straight line.
+   */
+  private positionOn(stops: TripStop[], track: Track | undefined, i: number, t: number) {
+    const last = stops.length - 1;
+    const ia = Math.max(0, Math.min(i, last)), ib = Math.min(ia + 1, last);
+    const a = stops[ia], b = stops[ib];
+    const f = t <= a.dep || b.arr <= a.dep ? 0 : Math.min(1, (t - a.dep) / (b.arr - a.dep));
+    if (track) {
+      const p = pointAt(track, track.stopDist[ia] + f * (track.stopDist[ib] - track.stopDist[ia]));
+      return { lat: p.lat, lon: p.lon, bearing: p.bearing };
+    }
+    const sa = this.stops.get(a.stop_id), sb = this.stops.get(b.stop_id);
+    if (!sa || !sb) return undefined;
+    return {
+      lat: sa.lat + (sb.lat - sa.lat) * f,
+      lon: sa.lon + (sb.lon - sa.lon) * f,
+      bearing: ia === ib ? undefined : bearing(sa.lat, sa.lon, sb.lat, sb.lon),
     };
   }
 
@@ -681,27 +705,11 @@ export class GtfsStore {
         const last = stops.length - 1;
         if (i === last && t > stops[last].arr + 30) continue; // finished
 
-        const a = stops[Math.min(i, last)];
-        const b = stops[Math.min(i + 1, last)];
-        const f = t <= a.dep || b.arr <= a.dep ? 0 : Math.min(1, (t - a.dep) / (b.arr - a.dep));
-        const track = this.track(r.shape_id, stops);
-        let lat: number, lon: number, brg: number | undefined;
-        if (track) {
-          const ia = Math.min(i, last), ib = Math.min(i + 1, last);
-          const p = pointAt(track, track.stopDist[ia] + f * (track.stopDist[ib] - track.stopDist[ia]));
-          lat = p.lat;
-          lon = p.lon;
-          brg = p.bearing;
-        } else {
-          const sa = this.stops.get(a.stop_id), sb = this.stops.get(b.stop_id);
-          if (!sa || !sb) continue;
-          lat = sa.lat + (sb.lat - sa.lat) * f;
-          lon = sa.lon + (sb.lon - sa.lon) * f;
-          brg = a === b ? undefined : bearing(sa.lat, sa.lon, sb.lat, sb.lon);
-        }
+        const pos = this.positionOn(stops, this.track(r.shape_id, stops), i, t);
+        if (!pos) continue;
         out.push({
           id: r.trip_id,
-          lat, lon, bearing: brg,
+          lat: pos.lat, lon: pos.lon, bearing: pos.bearing,
           tripId: r.trip_id,
           routeId: r.route_id,
           line: route.line,
