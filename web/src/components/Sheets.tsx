@@ -81,6 +81,21 @@ function StationSheet({ id }: { id: string }) {
     api.station(id, c.signal).then(setStation).catch(() => {});
     return () => c.abort();
   }, [id]);
+  // Draw the stop's lines on the map while its sheet is open.
+  const setStationLines = useUi((s) => s.setStationLines);
+  useEffect(() => {
+    const c = new AbortController();
+    api.stationLines(id, c.signal)
+      .then((data) => {
+        const routeIds = [...new Set(data.features.map((f) => f.properties?.routeId as string))];
+        setStationLines({ stationId: id, routeIds, data });
+      })
+      .catch(() => {});
+    return () => {
+      c.abort();
+      if (useUi.getState().stationLines?.stationId === id) setStationLines(undefined);
+    };
+  }, [id, setStationLines]);
   // Big hubs (a "place" merges metro, bus terminals and piers) can have dozens of bus lines.
   const busCount = station?.lines.filter((l) => l.mode === 'bus').length ?? 0;
   // A line filter is applied server-side so "next available" also works for a single line.

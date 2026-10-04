@@ -26,6 +26,7 @@ export const api = {
   connections: (from: string, to: string, s?: AbortSignal) =>
     get<Connection[]>(`/connections?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, s),
   network: (s?: AbortSignal) => get<GeoJSON.FeatureCollection>('/network', s),
+  stationLines: (id: string, s?: AbortSignal) => get<GeoJSON.FeatureCollection>(`/stations/${encodeURIComponent(id)}/lines`, s),
   trip: (id: string, s?: AbortSignal) => get<TripDetail>(`/trips/${encodeURIComponent(id)}`, s),
   vehicles: (bbox?: BBox, s?: AbortSignal) =>
     get<{ time: number; vehicles: Vehicle[] }>(`/vehicles${bbox ? `?bbox=${bboxParam(bbox)}` : ''}`, s),

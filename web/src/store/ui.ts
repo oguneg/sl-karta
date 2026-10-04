@@ -18,6 +18,8 @@ interface UiState {
   highlightRoute?: string;
   /** Selected vehicle's journey, drawn on the map instead of the generic line. */
   trip?: TripDetail;
+  /** Lines serving the open stop, drawn on the map (GeoJSON from /stations/:id/lines). */
+  stationLines?: { stationId: string; routeIds: string[]; data: GeoJSON.FeatureCollection };
   flyTo?: { lat: number; lon: number; zoom?: number; seq: number };
   /** Request to frame a bounding box [minLon, minLat, maxLon, maxLat]. */
   fitTo?: { bbox: [number, number, number, number]; seq: number };
@@ -28,6 +30,7 @@ interface UiState {
   close(): void;
   setHighlight(routeId?: string): void;
   setTrip(trip?: TripDetail): void;
+  setStationLines(v?: UiState['stationLines']): void;
   fly(lat: number, lon: number, zoom?: number): void;
   fit(bbox: [number, number, number, number]): void;
   setMeta(m?: Meta, offline?: boolean): void;
@@ -42,6 +45,7 @@ export const useUi = create<UiState>()((set) => ({
   close: () => set({ sheet: null }),
   setHighlight: (highlightRoute) => set({ highlightRoute }),
   setTrip: (trip) => set({ trip }),
+  setStationLines: (stationLines) => set({ stationLines }),
   fit: (bbox) => set((s) => ({ fitTo: { bbox, seq: (s.fitTo?.seq ?? 0) + 1 } })),
   fly: (lat, lon, zoom) => set((s) => ({ flyTo: { lat, lon, zoom, seq: (s.flyTo?.seq ?? 0) + 1 } })),
   setMeta: (meta, offline = false) => set({ meta, offline }),

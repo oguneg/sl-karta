@@ -68,6 +68,15 @@ app.get<{ Querystring: { from: string; to: string } }>('/api/connections', async
   return store.connections(req.query.from, req.query.to);
 });
 
+app.get<{ Params: { id: string } }>('/api/stations/:id/lines', async (req, reply) => {
+  const store = requireStore(reply);
+  if (!store) return;
+  const fc = store.stationLines(req.params.id);
+  if (!fc) return reply.code(404).send({ error: 'not_found' });
+  reply.header('Cache-Control', 'public, max-age=3600');
+  return fc;
+});
+
 app.get('/api/network', async (_req, reply) => {
   const store = requireStore(reply);
   if (!store) return;

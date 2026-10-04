@@ -45,6 +45,8 @@ const LINKED_RADIUS_M = 400;
 // Interchanges SL names differently (normalized names).
 const PLACE_ALIASES = [['t centralen', 'stockholm city']];
 
+const LINE_SORT: Record<Mode, number> = { metro: 5, train: 4, tram: 3, ship: 2, bus: 1, other: 0 };
+
 const MODE_ORDER: Mode[] = ['metro', 'train', 'tram', 'bus', 'ship', 'other'];
 
 const normalize = (s: string) =>
@@ -71,6 +73,7 @@ export class GtfsStore {
   private trackCache = new Map<string, Track | null>();
   private activeCache = new Map<string, ActiveTrip[]>();
   private networkCache?: GeoJSON.FeatureCollection;
+  private stationLinesCache = new Map<string, GeoJSON.FeatureCollection>();
   private placeCache = new Map<string, StationRec[]>();
   private vehicleCache?: { at: number; rt?: RealtimeLookup; list: Vehicle[] };
   private q: Record<string, StatementSync> = {};
@@ -747,6 +750,40 @@ export class GtfsStore {
    * Faint background network: one simplified track per rail line and direction, as GeoJSON.
    * Computed once per timetable import.
    */
+  /**
+   * Every line serving a place, as simplified map lines (one per direction unless both run on the
+   * same track), for drawing a stop's lines on the map. Cached per place.
+   */
+  stationLines(stationId: string): GeoJSON.FeatureCollection | undefined {
+    const st = this.rec(stationId);
+    if (!st) return undefined;
+    const place = this.placeStation(st);
+    const cached = this.stationLinesCache.get(st.id);
+    if (cached) return cached;
+    const features: GeoJSON.Feature[] = [];
+    for (const l of place.lines) {
+      const detail = this.routeDetail(l.routeId);
+      const seen: number[] = [];
+      for (const d of detail?.directions ?? []) {
+        if (d.shape.length < 2) continue;
+        // ~10 m: plenty for an overview of many lines, and keeps big hubs light to download.
+        const line = simplify(d.shape, 0.0001);
+        if (seen.some((n) => Math.abs(n - line.length) <= Math.max(2, line.length * 0.05))) continue;
+        seen.push(line.length);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: line.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]) },
+          // sort: rail above buses when many lines overlap (also marks station-mode lines for styling).
+          properties: { routeId: l.routeId, line: l.line, mode: l.mode, color: l.color, sort: LINE_SORT[l.mode] },
+        });
+      }
+    }
+    const fc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features };
+    if (this.stationLinesCache.size > 200) this.stationLinesCache.clear();
+    this.stationLinesCache.set(st.id, fc);
+    return fc;
+  }
+
   network(): GeoJSON.FeatureCollection {
     if (this.networkCache) return this.networkCache;
     const features: GeoJSON.Feature[] = [];

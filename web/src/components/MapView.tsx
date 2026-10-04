@@ -96,16 +96,35 @@ function addLayers(map: MlMap, dark: boolean) {
 
   map.addLayer({
     id: 'route-casing', type: 'line', source: 'route', filter: ['==', ['geometry-type'], 'LineString'],
-    layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': '#fff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 10] },
+    layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['coalesce', ['get', 'sort'], 0] },
+    paint: {
+      'line-color': '#fff',
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['has', 'sort'], 3, 5], 15, ['case', ['has', 'sort'], 6, 10]],
+    },
   });
   map.addLayer({
     id: 'route-line', type: 'line', source: 'route', filter: ['==', ['geometry-type'], 'LineString'],
-    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['coalesce', ['get', 'sort'], 0] },
     paint: {
       'line-color': ['case', ['==', ['get', 'passed'], true], '#9ca3af', ['get', 'color']],
-      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 15, 6],
+      // Station mode (many lines, they carry 'sort') draws thinner lines.
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['has', 'sort'], 1.8, 3], 15, ['case', ['has', 'sort'], 3.5, 6]],
     },
+  });
+  // Line numbers along the lines of the open stop.
+  map.addLayer({
+    id: 'route-labels', type: 'symbol', source: 'route',
+    filter: ['all', ['==', ['geometry-type'], 'LineString'], ['has', 'line']],
+    layout: {
+      'symbol-placement': 'line',
+      'symbol-spacing': 280,
+      'text-field': ['get', 'line'],
+      'text-font': FONT,
+      'text-size': 11,
+      'text-keep-upright': true,
+      'symbol-sort-key': ['-', 0, ['coalesce', ['get', 'sort'], 0]],
+    },
+    paint: { 'text-color': ['get', 'color'], 'text-halo-color': dark ? '#111827' : '#ffffff', 'text-halo-width': 2 },
   });
   map.addLayer({
     id: 'route-stops', type: 'circle', source: 'route', filter: ['==', ['geometry-type'], 'Point'],
@@ -202,14 +221,15 @@ export function MapView() {
   const modes = useSettings((s) => s.modes);
   const highlight = useUi((s) => s.highlightRoute);
   const trip = useUi((s) => s.trip);
+  const stationLines = useUi((s) => s.stationLines);
   const flyTo = useUi((s) => s.flyTo);
   const fitTo = useUi((s) => s.fitTo);
   const renderRef = useRef<() => void>(() => {});
   const loadRouteRef = useRef<() => Promise<void>>(undefined);
   const themeRef = useRef(theme);
   themeRef.current = theme;
-  const stateRef = useRef({ modes, highlight, trip });
-  stateRef.current = { modes, highlight, trip };
+  const stateRef = useRef({ modes, highlight, trip, stationLines });
+  stateRef.current = { modes, highlight, trip, stationLines };
 
   // Create the map once.
   useEffect(() => {
@@ -255,7 +275,9 @@ export function MapView() {
     const render = () => {
       const src = map.getSource('vehicles') as GeoJSONSource | undefined;
       if (!src) return;
-      const { modes, highlight } = stateRef.current;
+      const { modes, highlight, stationLines } = stateRef.current;
+      // Emphasise one line if selected, otherwise the lines of the open stop.
+      const focus = highlight ? new Set([highlight]) : stationLines ? new Set(stationLines.routeIds) : undefined;
       const features: GeoJSON.Feature[] = [];
       for (const [id, v] of vehiclesRef.current) {
         if (!modes.includes(v.mode)) continue;
@@ -266,8 +288,8 @@ export function MapView() {
           properties: {
             id, line: v.line ?? '', color: v.color, mode: v.mode,
             ...(v.bearing !== undefined ? { bearing: v.bearing } : {}),
-            dim: !!highlight && v.routeId !== highlight,
-            sort: (highlight && v.routeId === highlight ? 10 : 0) + MODE_SORT[v.mode],
+            dim: !!focus && !focus.has(v.routeId ?? ''),
+            sort: (focus?.has(v.routeId ?? '') ? 10 : 0) + MODE_SORT[v.mode],
           },
         });
       }
@@ -345,9 +367,13 @@ export function MapView() {
       const src = map.getSource('route') as GeoJSONSource | undefined;
       if (!src) return;
       routeCtrl?.abort();
-      const { trip, highlight: routeId } = stateRef.current;
+      const { trip, highlight: routeId, stationLines } = stateRef.current;
       if (trip) {
         src.setData(tripFeatures(trip, vehiclesRef.current));
+        return;
+      }
+      if (!routeId && stationLines) {
+        src.setData(stationLines.data);
         return;
       }
       if (!routeId) {
@@ -470,11 +496,11 @@ export function MapView() {
 
   useEffect(() => {
     renderRef.current();
-  }, [modes, highlight]);
+  }, [modes, highlight, stationLines]);
 
   useEffect(() => {
     void loadRouteRef.current?.();
-  }, [highlight, trip]);
+  }, [highlight, trip, stationLines]);
 
   useEffect(() => {
     const map = mapRef.current;
