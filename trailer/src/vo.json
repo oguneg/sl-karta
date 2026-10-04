@@ -1,1 +1,48 @@
-{}
+{
+  "intro": {
+    "file": "vo/intro.wav",
+    "text": "Stockholm never stands still.",
+    "seconds": 1.896
+  },
+  "map": {
+    "file": "vo/map.wav",
+    "text": "SL Karta shows every bus, train and metro. Live, on one map.",
+    "seconds": 5.103
+  },
+  "lines": {
+    "file": "vo/lines.wav",
+    "text": "Tap a stop, and see every line running through it.",
+    "seconds": 2.729
+  },
+  "vehicle": {
+    "file": "vo/vehicle.wav",
+    "text": "Tap a departure, and follow it, stop by stop, all the way to yours.",
+    "seconds": 4.04
+  },
+  "favorites": {
+    "file": "vo/favorites.wav",
+    "text": "Save the rides you take every day.",
+    "seconds": 2.243
+  },
+  "plan": {
+    "file": "vo/plan.wav",
+    "text": "Plan your morning around them,",
+    "seconds": 1.454
+  },
+  "nearby": {
+    "file": "vo/nearby.wav",
+    "text": "and see what's leaving right around you.",
+    "seconds": 2.142
+  },
+  "desktop": {
+    "file": "vo/desktop.wav",
+    "text": "On your phone, or on the web.",
+    "seconds": 2.146
+  },
+  "outro": {
+    "file": "vo/outro.wav",
+    "text": "SL Karta. Stockholm, live.",
+    "seconds": 2.628
+  },
+  "_complete": true
+}
