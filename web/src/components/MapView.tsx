@@ -21,7 +21,7 @@ const STYLES = {
 const FONT = ['Noto Sans Bold'];
 const VIEW_KEY = 'slk.view';
 const POLL_MS = 5000;
-const ANIM_MS = 1500;
+const ANIM_MIN_MS = 800; // vehicles glide over the time since the previous fetch, so motion is continuous
 const STATION_MIN_ZOOM = 13;
 
 type BBox = [number, number, number, number];
@@ -216,6 +216,7 @@ export function MapView() {
   const vehiclesRef = useRef(new Map<string, Vehicle>());
   const animRef = useRef(new Map<string, { from: [number, number]; to: [number, number]; cur: [number, number] }>());
   const animStart = useRef(0);
+  const animMs = useRef(ANIM_MIN_MS);
   const rafRef = useRef(0);
   const theme = useResolvedTheme();
   const modes = useSettings((s) => s.modes);
@@ -300,13 +301,12 @@ export function MapView() {
     renderRef.current = render;
 
     const animate = () => {
-      const f = Math.min(1, (performance.now() - animStart.current) / ANIM_MS);
-      const e = f < 0.5 ? 2 * f * f : 1 - (-2 * f + 2) ** 2 / 2;
+      const e = Math.min(1, (performance.now() - animStart.current) / animMs.current);
       for (const a of animRef.current.values()) {
         a.cur = [a.from[0] + (a.to[0] - a.from[0]) * e, a.from[1] + (a.to[1] - a.from[1]) * e];
       }
       render();
-      if (f < 1) rafRef.current = requestAnimationFrame(animate);
+      if (e < 1) rafRef.current = requestAnimationFrame(animate);
     };
 
     let vehTimer: ReturnType<typeof setTimeout>;
@@ -335,7 +335,9 @@ export function MapView() {
           if (live) useUi.getState().open({ ...sheet, vehicle: live });
         }
         cancelAnimationFrame(rafRef.current);
-        animStart.current = performance.now();
+        const t = performance.now();
+        animMs.current = Math.min(POLL_MS * 2, Math.max(ANIM_MIN_MS, t - animStart.current));
+        animStart.current = t;
         rafRef.current = requestAnimationFrame(animate);
       } catch (e) {
         if ((e as Error).name === 'AbortError') return;

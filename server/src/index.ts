@@ -7,7 +7,7 @@ import { config } from './config.ts';
 import { DataManager } from './data.ts';
 import { strip, type GtfsStore } from './gtfs/store.ts';
 import { DemoRealtime, RealtimePoller } from './realtime/poller.ts';
-import { clockShifted, nowSec } from './time.ts';
+import { clockShifted, nowSec, pinClock } from './time.ts';
 
 const data = new DataManager();
 // With a shifted clock (CLOCK_AT) live data would describe the wrong moment: simulate delays instead.
@@ -15,6 +15,12 @@ const poller = new RealtimePoller(config.demo || clockShifted ? '' : config.real
 const rt = config.demo || clockShifted ? new DemoRealtime() : poller;
 
 const app = Fastify({ logger: { level: 'warn' } });
+if (clockShifted) {
+  app.addHook('onRequest', async (req) => {
+    const h = Number(req.headers['x-sim-time']);
+    pinClock(Number.isFinite(h) && h > 0 ? h : undefined);
+  });
+}
 await app.register(cors, { origin: true });
 
 function requireStore(reply: FastifyReply): GtfsStore | undefined {

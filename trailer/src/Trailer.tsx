@@ -1,7 +1,7 @@
 import { loadFont } from '@remotion/google-fonts/Inter';
 import type { CSSProperties } from 'react';
 import {
-  AbsoluteFill, Audio, Easing, Img, interpolate, Sequence, spring, staticFile, useCurrentFrame, useVideoConfig,
+  AbsoluteFill, Audio, Easing, interpolate, OffthreadVideo, Sequence, spring, staticFile, useCurrentFrame, useVideoConfig,
 } from 'remotion';
 import { CENTER_PX, H, NervousNetwork, useNetwork, W } from './Network';
 import measured from './rects.json';
@@ -135,8 +135,8 @@ function CityMorph({ s }: { s: Segment }) {
         transform: `translateX(${leave * 900}px) rotate(${leave * 10}deg) scale(${bump})`, filter: `blur(${leave * 14}px)`,
       }}>
         <div style={{ position: 'relative', width: '100%', height: '100%', borderRadius: radius, overflow: 'hidden' }}>
-          <Img src={staticFile('shots/citywide.png')} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${zoom})`, opacity: 1 - swap }} />
-          <Img src={staticFile('shots/map.png')} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: swap }} />
+          <OffthreadVideo muted src={staticFile('clips/citywide.mp4')} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${zoom})`, opacity: 1 - swap }} />
+          <OffthreadVideo muted src={staticFile('clips/map.mp4')} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: swap }} />
           {FOCUS.map && swap > 0 && <FocusRing r={FOCUS.map} frame={frame} on={interpolate(frame, [78, 92], [0, 1], clamp)} />}
         </div>
       </div>
@@ -182,7 +182,7 @@ function Phone({ shot, focus, frame, on }: { shot: string; focus?: Rect; frame: 
       boxShadow: '0 4px 10px rgba(15,23,42,0.18), 0 34px 80px rgba(15,23,42,0.30)',
     }}>
       <div style={{ position: 'relative', width: PHONE_W, height: PHONE_H, borderRadius: 52, overflow: 'hidden', background: '#fff' }}>
-        <Img src={staticFile(`shots/${shot}.png`)} style={{ width: '100%', height: '100%', display: 'block' }} />
+        <OffthreadVideo muted src={staticFile(`clips/${shot}.mp4`)} style={{ width: '100%', height: '100%', display: 'block' }} />
         {focus && <FocusRing r={focus} frame={frame} on={on} />}
       </div>
     </div>
@@ -221,7 +221,7 @@ function Desktop({ s }: { s: Segment }) {
         opacity: 1 - leave, filter: `blur(${leave * 12}px)`,
       }}>
         <div style={{ width: BW, height: BH, borderRadius: 14, overflow: 'hidden' }}>
-          <Img src={staticFile('shots/desktop.png')} style={{ width: BW, height: BH, display: 'block', transform: `scale(${push})`, transformOrigin: '60% 45%' }} />
+          <OffthreadVideo muted src={staticFile('clips/desktop.mp4')} style={{ width: BW, height: BH, display: 'block', transform: `scale(${push})`, transformOrigin: '60% 45%' }} />
         </div>
       </div>
     </AbsoluteFill>

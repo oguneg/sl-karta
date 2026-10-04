@@ -15,7 +15,10 @@ const fmt = new Intl.DateTimeFormat('en-CA', {
 // moving forward from there. For demos and trailer capture only; never set in production.
 const CLOCK_OFFSET = process.env.CLOCK_AT ? Math.round((Date.parse(process.env.CLOCK_AT) - Date.now()) / 1000) : 0;
 export const clockShifted = CLOCK_OFFSET !== 0;
-export const nowSec = () => Math.floor(Date.now() / 1000) + CLOCK_OFFSET;
+// With CLOCK_AT set, a request may pin the clock (x-sim-time header) so trailer capture can step time.
+let pinned: number | undefined;
+export const pinClock = (sec: number | undefined) => { pinned = clockShifted ? sec : undefined; };
+export const nowSec = () => pinned ?? Math.floor(Date.now() / 1000) + CLOCK_OFFSET;
 
 function parts(epochSec: number) {
   const p: Record<string, number> = {};
