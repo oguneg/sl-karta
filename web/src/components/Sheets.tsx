@@ -7,6 +7,7 @@ import { useLocale, useT } from '../i18n';
 import { showStation, useUi } from '../store/ui';
 import { LineBadge, ModeIcon } from './Badges';
 import { DepartureRow, StopStar } from './Departures';
+import { Icon } from './Icon';
 import { useBottomSheet } from './useBottomSheet';
 
 /** Identifies what the sheet shows (not its live data), so the vehicle sheet's refreshes don't reset it. */
@@ -42,7 +43,7 @@ function Sheet({ sheet }: { sheet: NonNullable<ReturnType<typeof useUi.getState>
         aria-label={snap === 'peek' ? t('sheet.expand') : t('sheet.collapse')}
         onClick={() => setSnap(snap === 'peek' ? 'half' : 'peek')}
       />
-      <button className="sheet-close" onClick={close} aria-label={t('common.close')}>✕</button>
+      <button className="sheet-close" onClick={close} aria-label={t('common.close')}><Icon name="close" size={18} /></button>
       {sheet.kind === 'station' && <StationSheet id={sheet.id} />}
       {sheet.kind === 'vehicle' && <VehicleSheet />}
       {sheet.kind === 'route' && <RouteSheet id={sheet.id} directionId={sheet.directionId} fit={sheet.fit} />}
@@ -234,7 +235,7 @@ function VehicleSheet() {
 
       {next && (
         <button className="trip-next" onClick={() => showStation(next.stationId, next.lat, next.lon)} style={{ ['--line' as string]: v.color }}>
-          <span className="muted small">{t('trip.next')}</span>
+          <span className="trip-next-label"><span className="line-dot" aria-hidden="true" />{t('trip.next')}</span>
           <strong className="trip-next-name">{next.name}</strong>
           <span className="trip-next-time">
             <strong className={next.expected !== undefined ? 'rt' : ''}>{countdown(when(next), t, locale, now)}</strong>

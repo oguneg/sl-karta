@@ -3,6 +3,7 @@ import type { Connection, FavoriteRide, Station } from '../../../shared/types';
 import { api } from '../api/client';
 import { AdSlot } from '../components/AdSlot';
 import { LineBadge, ModeIcon } from '../components/Badges';
+import { Icon } from '../components/Icon';
 import { clock, countdown, delayLabel, departureTime, fallbackNotice } from '../format';
 import { useNow, usePolling } from '../hooks';
 import { useLocale, useT } from '../i18n';
@@ -23,7 +24,7 @@ export function FavoritesScreen() {
     <div className="page">
       <div className="page-head">
         <h1>{t('tab.favorites')}</h1>
-        {!adding && <button className="btn primary" onClick={() => setAdding(true)}>+ {t('fav.new')}</button>}
+        {!adding && <button className="btn primary with-icon" onClick={() => setAdding(true)}><Icon name="plus" size={18} />{t('fav.new')}</button>}
       </div>
       {adding && <RideEditor onDone={() => setAdding(false)} />}
       {items.length === 0 && !adding && <p className="empty">{t('fav.empty')}</p>}
@@ -64,7 +65,7 @@ function StopPicker({ label, value, onPick, autoFocus }: {
         <span>{label}</span>
         <div className="picked">
           <strong>{value.name}</strong>
-          <button className="icon-btn" aria-label={t('common.remove')} onClick={() => onPick(undefined)}>✕</button>
+          <button className="icon-btn" aria-label={t('common.remove')} onClick={() => onPick(undefined)}><Icon name="close" size={18} /></button>
         </div>
       </div>
     );
@@ -226,12 +227,13 @@ function FavCard({ fav, first, last }: { fav: FavoriteRide; first: boolean; last
             ))}
         </div>
         <button className="fav-title" onClick={() => showStation(fav.fromId)}>
-          <strong>{fav.fromName}{fav.toName ? ` → ${fav.toName}` : ''}</strong>
+          <strong>{fav.fromName}</strong>
+          {fav.toName && <span className="fav-to"><Icon name="arrow" size={14} />{fav.toName}</span>}
           {isStop && <span className="muted small">{t('fav.stop')}</span>}
           {!fav.toName && fav.headsign && <span className="muted">{t('fav.to')} {fav.headsign}</span>}
           {fav.toName && !fav.routeIds && <span className="muted small">{t('fav.allLines')}</span>}
         </button>
-        <button className="icon-btn" aria-expanded={editing} aria-label={t('fav.edit')} onClick={() => setEditing(!editing)}>⋯</button>
+        <button className="icon-btn" aria-expanded={editing} aria-label={t('fav.edit')} onClick={() => setEditing(!editing)}><Icon name="more" /></button>
       </div>
       {later && <p className="notice small">{later.text}</p>}
       <ol className="ride-deps">
@@ -290,8 +292,8 @@ function FavEditor({ fav, first, last, onMove, onRemove }: {
         </div>
       )}
       <div className="actions">
-        <button className="btn" disabled={first} onClick={() => onMove(-1)} aria-label="Up">↑</button>
-        <button className="btn" disabled={last} onClick={() => onMove(1)} aria-label="Down">↓</button>
+        <button className="btn icon-only" disabled={first} onClick={() => onMove(-1)} aria-label={t('common.up')}><Icon name="up" size={18} /></button>
+        <button className="btn icon-only" disabled={last} onClick={() => onMove(1)} aria-label={t('common.down')}><Icon name="down" size={18} /></button>
         {fav.lines.length === 1 && (
           <button className="btn" onClick={() => useUi.getState().open({ kind: 'route', id: fav.lines[0].routeId, directionId: fav.directionId })}>{t('line.stops')}</button>
         )}

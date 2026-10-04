@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { FavoriteRide, PlanRequest } from '../../../shared/types';
 import { api } from '../api/client';
 import { LineBadge } from '../components/Badges';
+import { Icon } from '../components/Icon';
 import { clock, delayLabel, departureTime, todayIso } from '../format';
 import { usePolling } from '../hooks';
 import { useLocale, useT } from '../i18n';
@@ -107,7 +108,7 @@ function LegEditor({ leg, first, last }: { leg: PlanLeg; first: boolean; last: b
   const { updateLeg, removeLeg, moveLeg } = usePlan.getState();
   return (
     <details className="leg-edit">
-      <summary>⋯</summary>
+      <summary aria-label={t('fav.edit')}><Icon name="more" /></summary>
       <div className="leg-edit-body">
         <label className="field">
           <span>{t('plan.notBefore')}</span>
@@ -121,8 +122,8 @@ function LegEditor({ leg, first, last }: { leg: PlanLeg; first: boolean; last: b
           />
         </label>
         <div className="actions">
-          <button className="btn" disabled={first} onClick={() => moveLeg(leg.key, -1)} aria-label="Up">↑</button>
-          <button className="btn" disabled={last} onClick={() => moveLeg(leg.key, 1)} aria-label="Down">↓</button>
+          <button className="btn icon-only" disabled={first} onClick={() => moveLeg(leg.key, -1)} aria-label={t('common.up')}><Icon name="up" size={18} /></button>
+          <button className="btn icon-only" disabled={last} onClick={() => moveLeg(leg.key, 1)} aria-label={t('common.down')}><Icon name="down" size={18} /></button>
           <button className="btn danger" onClick={() => removeLeg(leg.key)}>{t('common.remove')}</button>
         </div>
       </div>

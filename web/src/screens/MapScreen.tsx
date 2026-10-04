@@ -1,6 +1,7 @@
 import { ALL_MODES } from '../../../shared/types';
 import { LineBadge, ModeIcon } from '../components/Badges';
 import { MapView } from '../components/MapView';
+import { Icon } from '../components/Icon';
 import { SearchBox } from '../components/SearchBox';
 import { usePolling } from '../hooks';
 import { api } from '../api/client';
@@ -21,11 +22,18 @@ export function MapScreen() {
       <MapView />
       <div className="map-top">
         <SearchBox />
-        <div className="mode-chips" role="group">
+        {/* Compact mode toggles: the icon carries the mode colour when shown, grey when hidden. */}
+        <div className="mode-chips" role="group" aria-label={t('map.filter')}>
           {ALL_MODES.map((m) => (
-            <button key={m} className={`mode-chip ${modes.includes(m) ? 'on' : ''}`} aria-pressed={modes.includes(m)} onClick={() => toggleMode(m)} title={t(`mode.${m}`)}>
-              <ModeIcon mode={m} size={16} />
-              <span>{t(`mode.${m}`)}</span>
+            <button
+              key={m}
+              className={`mode-chip mode-${m} ${modes.includes(m) ? 'on' : ''}`}
+              aria-pressed={modes.includes(m)}
+              aria-label={t(`mode.${m}`)}
+              title={t(`mode.${m}`)}
+              onClick={() => toggleMode(m)}
+            >
+              <ModeIcon mode={m} size={20} />
             </button>
           ))}
         </div>
@@ -33,7 +41,7 @@ export function MapScreen() {
           <button className="route-pill" onClick={() => setHighlight(undefined)} aria-label={t('line.hide')}>
             <LineBadge line={route.line} color={route.color} textColor={route.textColor} mode={route.mode} size="sm" />
             <span>{route.directions[0]?.headsign} – {route.directions[1]?.headsign ?? ''}</span>
-            <span aria-hidden="true">✕</span>
+            <Icon name="close" size={16} />
           </button>
         )}
       </div>

@@ -138,10 +138,10 @@ function addLayers(map: MlMap, dark: boolean) {
   map.addLayer({
     id: 'stations', type: 'circle', source: 'stations', minzoom: STATION_MIN_ZOOM,
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 3, 17, 7],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, ['case', ['get', 'rail'], 4, 2.5], 17, ['case', ['get', 'rail'], 8, 5]],
       'circle-color': dark ? '#111827' : '#ffffff',
-      'circle-stroke-color': ['get', 'color'],
-      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 13, 1.5, 17, 2.5],
+      'circle-stroke-color': ['case', ['get', 'rail'], ['get', 'color'], dark ? '#6b7280' : '#8b95a3'],
+      'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 13, ['case', ['get', 'rail'], 2, 1.25], 17, ['case', ['get', 'rail'], 3, 2]],
     },
   });
   map.addLayer({
@@ -247,6 +247,8 @@ export function MapView() {
     mapRef.current = map;
     if (import.meta.env.DEV) (window as unknown as { __map?: MlMap }).__map = map; // debugging aid
     map.addControl(new GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'bottom-right');
+    // Start with the attribution folded into its (i) button instead of a full-width bar.
+    map.once('load', () => map.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show'));
 
     map.on('styleimagemissing', (e: { id: string }) => {
       const m = /^(vp|vc)-(#[0-9a-f]{6})$/i.exec(e.id);
@@ -353,7 +355,12 @@ export function MapView() {
           features: stations.map((s) => ({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
-            properties: { id: s.id, name: s.name, color: s.lines[0]?.color ?? '#6b7280' },
+            // Rail stations keep their line colour; bus-only stops stay quiet and neutral.
+            properties: {
+              id: s.id, name: s.name,
+              rail: s.modes.some((m) => m !== 'bus'),
+              color: (s.lines.find((l) => l.mode !== 'bus') ?? s.lines[0])?.color ?? '#6b7280',
+            },
           })),
         });
       } catch {

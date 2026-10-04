@@ -11,6 +11,7 @@ import { useLocale, useT } from '../i18n';
 import { showStation } from '../store/ui';
 
 const FALLBACK = { lat: 59.3313, lon: 18.0596 }; // T-Centralen
+const NEARBY_CHIPS = 10;
 
 type Pos = { lat: number; lon: number; fallback?: boolean };
 
@@ -79,9 +80,11 @@ function NearbyCard({ station, live }: { station: Station; live: boolean }) {
           <div>
             <h2>{station.name}</h2>
             <div className="chips">
-              {station.lines.slice(0, 10).map((l) => (
+              {/* At most ten chips, rail first, so big hubs stay on one or two rows. */}
+              {station.lines.slice(0, NEARBY_CHIPS).map((l) => (
                 <LineBadge key={l.routeId} line={l.line} color={l.color} textColor={l.textColor} mode={l.mode} size="sm" />
               ))}
+              {station.lines.length > NEARBY_CHIPS && <span className="chip-count">+{station.lines.length - NEARBY_CHIPS}</span>}
             </div>
           </div>
           {station.distance !== undefined && <span className="dist">{distance(station.distance)}</span>}
@@ -92,7 +95,7 @@ function NearbyCard({ station, live }: { station: Station; live: boolean }) {
       {fallbackNotice(deps, 60, t, locale, now) && <p className="notice small">{fallbackNotice(deps, 60, t, locale, now)!.text}</p>}
       {deps && deps.length > 0 && (
         <ul className="dep-list compact">
-          {deps.slice(0, 4).map((d) => <DepartureRow key={d.tripId + d.stopId} dep={d} now={now} station={station} />)}
+          {deps.slice(0, 4).map((d) => <DepartureRow key={d.tripId + d.stopId} dep={d} now={now} station={station} showStar={false} />)}
         </ul>
       )}
     </article>
