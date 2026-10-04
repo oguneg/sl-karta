@@ -1,0 +1,23 @@
+{
+  "name": "sl-karta-trailer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "music": "node music.mjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Trailer out/sl-karta-trailer.mp4 --codec h264 --crf 18"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.532",
+    "@remotion/google-fonts": "^4.0.532",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "puppeteer-core": "^25.12.0",
+    "typescript": "^7.0.2"
+  }
+}
