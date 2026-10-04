@@ -5,3 +5,4 @@ server/data/
 *.local
 android/
 ios/
+.deployed
