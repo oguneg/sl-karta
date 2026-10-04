@@ -1,5 +1,7 @@
 # Production: docker compose up -d --build
 # Needs server/.env (Trafiklab keys) and .env with DOMAIN=your.domain (see .env.example).
+# HTTPS is handled by the server's shared Caddy proxy (~/proxy on the VPS): this service joins the
+# external "web" network and declares its domain with labels.
 services:
   app:
     build: .
@@ -10,26 +12,17 @@ services:
       API_PORT: 8787
     volumes:
       - sl-data:/data
-    expose:
-      - "8787"
+    networks:
+      - web
+      - default
+    labels:
+      caddy: ${DOMAIN:?Set DOMAIN in .env}
+      caddy.reverse_proxy: "{{upstreams 8787}}"
+      caddy.encode: zstd gzip
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    depends_on:
-      - app
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    environment:
-      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+networks:
+  web:
+    external: true
 
 volumes:
   sl-data:
-  caddy-data:
-  caddy-config:

@@ -107,8 +107,13 @@ Plug in e.g. `@capacitor-community/admob` and RevenueCat there once the model is
 
 ## Deploying (VPS with Docker)
 
-One container serves both the website and the API. [Caddy](https://caddyserver.com) sits in front and gets
-HTTPS certificates automatically. Needs ~2 GB RAM for the timetable import and ~2 GB disk.
+One container serves both the website and the API. The server runs a **shared** Caddy proxy for all
+projects (`~/proxy` on the VPS, see its README); this app joins the external `web` Docker network and
+declares its domain with `caddy` labels in `docker-compose.yml`, and the proxy handles HTTPS. Needs
+~2 GB RAM for the timetable import and ~2 GB disk.
+
+On a fresh server, set up the proxy first: `docker network create web`, then `~/proxy/docker-compose.yml`
+with `lucaslorentz/caddy-docker-proxy` publishing ports 80/443.
 
 **1. DNS.** At your domain registrar, add an **A record** for the (sub)domain, e.g. `sl`, pointing to the
 VPS's IPv4 address. Wait until `ping sl.ogun.se` answers from that IP.
@@ -129,11 +134,8 @@ docker compose logs -f app           # first start: downloads + imports SL data 
 
 Then open `https://sl.ogun.se`.
 
-**Update** after pushing new code:
-
-```bash
-cd sl-karta && git pull && docker compose up -d --build
-```
+**Update:** pushing to `main` deploys automatically (GitHub Actions → `deploy/update.sh` on the VPS).
+Manually: `~/sl-karta/deploy/update.sh`.
 
 The SL database lives in the `sl-data` Docker volume and survives rebuilds; it refreshes itself daily.
 
