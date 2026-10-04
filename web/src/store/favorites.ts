@@ -6,6 +6,9 @@ import { storage } from '../platform/storage';
 /** Id of a single-line favourite starred from a departure board. */
 export const lineFavKey = (fromId: string, routeId: string, directionId: number) => `${fromId}|${routeId}|${directionId}`;
 
+/** Id of a whole-stop favourite. */
+export const stopFavKey = (stationId: string) => `stop:${stationId}`;
+
 /** Id of an A→B ride favourite. */
 export const rideFavKey = (fromId: string, toId: string, routeIds: string[]) =>
   `${fromId}>${toId}|${[...routeIds].sort().join(',')}`;

@@ -170,21 +170,32 @@ app.get<{ Params: { id: string } }>('/api/stations/:id', async (req, reply) => {
   return s ?? reply.code(404).send({ error: 'not_found' });
 });
 
-app.get<{ Params: { id: string }; Querystring: { from?: string; minutes?: string; route?: string; routes?: string; direction?: string; to?: string; limit?: string } }>(
+app.get<{
+  Params: { id: string };
+  Querystring: {
+    from?: string; minutes?: string; route?: string; routes?: string; direction?: string; to?: string; limit?: string;
+    /** "1": if nothing departs in the window, return the next departures within 3 days instead. */
+    fallback?: string;
+  };
+}>(
   '/api/stations/:id/departures',
   async (req, reply) => {
     const store = requireStore(reply);
     if (!store) return;
     const q = req.query;
-    return store
-      .departures(req.params.id, num(q.from, nowSec()), Math.min(num(q.minutes, 60)!, 24 * 60), {
-        routeIds: (q.routes ?? q.route)?.split(',').filter(Boolean),
-        directionId: num(q.direction),
-        toStationId: q.to || undefined,
-        limit: Math.min(num(q.limit, 40)!, 200),
-        rt,
-      })
-      .map(strip);
+    const from = num(q.from, nowSec())!;
+    const limit = Math.min(num(q.limit, 40)!, 200);
+    const opts = {
+      routeIds: (q.routes ?? q.route)?.split(',').filter(Boolean),
+      directionId: num(q.direction),
+      toStationId: q.to || undefined,
+      rt,
+    };
+    let deps = store.departures(req.params.id, from, Math.min(num(q.minutes, 60)!, 24 * 60), { ...opts, limit });
+    if (!deps.length && q.fallback === '1') {
+      deps = store.departures(req.params.id, from, 3 * 24 * 60, { ...opts, limit: Math.min(limit, 5) });
+    }
+    return deps.map(strip);
   },
 );
 

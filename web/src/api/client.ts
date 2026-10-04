@@ -38,13 +38,18 @@ export const api = {
   station: (id: string, s?: AbortSignal) => get<Station>(`/stations/${encodeURIComponent(id)}`, s),
   departures: (
     id: string,
-    opts: { minutes?: number; routes?: string[]; direction?: number; to?: string; limit?: number; from?: number } = {},
+    opts: {
+      minutes?: number; routes?: string[]; direction?: number; to?: string; limit?: number; from?: number;
+      /** If nothing departs within `minutes`, get the next departures (up to 3 days ahead) instead. */
+      fallback?: boolean;
+    } = {},
     s?: AbortSignal,
   ) => {
     const p = new URLSearchParams();
     if (opts.minutes) p.set('minutes', String(opts.minutes));
     if (opts.routes?.length) p.set('routes', opts.routes.join(','));
     if (opts.to) p.set('to', opts.to);
+    if (opts.fallback) p.set('fallback', '1');
     if (opts.direction !== undefined) p.set('direction', String(opts.direction));
     if (opts.limit) p.set('limit', String(opts.limit));
     if (opts.from) p.set('from', String(opts.from));

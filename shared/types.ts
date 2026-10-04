@@ -141,6 +141,7 @@ export interface TripDetail {
  * A favourite ride: from one place, optionally to another, optionally only some lines.
  * - from + to: every line going directly between them (or only `routeIds`)
  * - from + one line + direction: that line from that stop (starred from a departure board)
+ * - from only: everything departing from that stop
  */
 export interface FavoriteRide {
   id: string;
@@ -153,6 +154,8 @@ export interface FavoriteRide {
   /** Badges to show, cached when saved. */
   lines: { routeId: string; line: string; mode: Mode; color: string; textColor: string }[];
   headsign?: string;
+  /** Stop favourite (no destination, no lines): the modes served, for its icon. */
+  modes?: Mode[];
 }
 
 export interface PlanLegRequest {

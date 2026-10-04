@@ -139,7 +139,7 @@ function AddLeg({ favorites, onAdd }: { favorites: FavoriteRide[]; onAdd: (id: s
         <option value="">{t('plan.pick')}</option>
         {favorites.map((f) => (
           <option key={f.id} value={f.id}>
-            {f.lines.map((l) => l.line).join('/')} · {f.fromName} → {f.toName ?? f.headsign}
+            {[f.lines.map((l) => l.line).join('/'), f.fromName].filter(Boolean).join(' · ')}{f.toName || f.headsign ? ` → ${f.toName ?? f.headsign}` : ''}
           </option>
         ))}
       </select>

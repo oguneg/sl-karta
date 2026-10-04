@@ -415,7 +415,11 @@ export class GtfsStore {
     const lookback = 30 * 60;
     const out: DepInternal[] = [];
     const today = serviceDate(from);
-    for (const day of [addDays(today, -1), today]) {
+    // Yesterday (trips past midnight) through as many days as the window covers.
+    const lastDay = serviceDate(from + minutes * 60);
+    const days = [addDays(today, -1), today];
+    while (days[days.length - 1] < lastDay) days.push(addDays(days[days.length - 1], 1));
+    for (const day of days) {
       const base = midnight(day);
       const lo = from - base - lookback, hi = from + minutes * 60 - base;
       if (hi < 0) continue;

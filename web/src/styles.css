@@ -561,3 +561,11 @@ ul.plain { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0
 .ride-deps li:first-child .ride-when { font-size: 1.2rem; }
 .ride-deps li.canceled .ride-when { text-decoration: line-through; color: var(--muted); }
 .ride-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.title-row { display: flex; align-items: center; gap: 0.25rem; }
+.card-top { display: flex; align-items: flex-start; gap: 0.25rem; }
+.card-top .card-head { flex: 1; min-width: 0; }
+.notice.small { padding: 0.4rem 0.7rem; margin: 0.5rem 0 0.25rem; }
+.stop-icon { display: inline-flex; gap: 2px; padding: 6px; border-radius: 10px; background: var(--surface-2); color: var(--accent); }
+.ride-deps li { grid-template-columns: auto minmax(4.2rem, auto) 1fr auto; }
+.ride-when { white-space: nowrap; }

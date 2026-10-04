@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Departure, Mode, Station, TripStopTime } from '../../../shared/types';
 import { api } from '../api/client';
 import { useNow, usePolling } from '../hooks';
-import { clock, countdown } from '../format';
+import { clock, countdown, fallbackNotice } from '../format';
 import { useLocale, useT } from '../i18n';
 import { showStation, useUi } from '../store/ui';
 import { LineBadge, ModeIcon } from './Badges';
-import { DepartureRow } from './Departures';
+import { DepartureRow, StopStar } from './Departures';
 
 export function SheetHost() {
   const sheet = useUi((s) => s.sheet);
@@ -39,11 +39,15 @@ function groupByMode(deps: Departure[]) {
   return [...m.entries()];
 }
 
+/** Departure board window (minutes); beyond it the server falls back to the next departures. */
+const WINDOW_MIN = 90;
+
 /** Above this many bus lines, bus chips are folded behind a toggle. */
 const BUS_CHIPS = 8;
 
 function StationSheet({ id }: { id: string }) {
   const t = useT();
+  const locale = useLocale();
   const now = useNow(10_000);
   const [station, setStation] = useState<Station>();
   const [filter, setFilter] = useState<string>();
@@ -58,14 +62,23 @@ function StationSheet({ id }: { id: string }) {
   }, [id]);
   // Big hubs (a "place" merges metro, bus terminals and piers) can have dozens of bus lines.
   const busCount = station?.lines.filter((l) => l.mode === 'bus').length ?? 0;
-  const { data: deps, error } = usePolling((s) => api.departures(id, { minutes: 90, limit: 120 }, s), 20_000, [id]);
-  const shown = useMemo(() => (deps ?? []).filter((d) => !filter || d.routeId === filter), [deps, filter]);
+  // A line filter is applied server-side so "next available" also works for a single line.
+  const { data: deps, error } = usePolling(
+    (s) => api.departures(id, { minutes: WINDOW_MIN, limit: 120, routes: filter ? [filter] : undefined, fallback: true }, s),
+    20_000,
+    [id, filter],
+  );
+  const shown = deps ?? [];
   const groups = groupByMode(shown);
+  const later = fallbackNotice(deps, WINDOW_MIN, t, locale, now);
 
   return (
     <div className="sheet-body">
       <header className="sheet-head">
-        <h2>{station?.name ?? '…'}</h2>
+        <div className="title-row">
+          <h2>{station?.name ?? '…'}</h2>
+          {station && <StopStar station={station} />}
+        </div>
         <div className="chips">
           {station?.lines.filter((l) => showAllLines || l.mode !== 'bus' || l.routeId === filter || busCount <= BUS_CHIPS).map((l) => (
             <button
@@ -88,7 +101,8 @@ function StationSheet({ id }: { id: string }) {
         </div>
       </header>
       {error && !deps ? <p className="empty">{t('status.offline')}</p> : null}
-      {deps && shown.length === 0 && <p className="empty">{t('dep.none')}</p>}
+      {deps && shown.length === 0 && <p className="empty">{t('dep.noneAtAll')}</p>}
+      {later && <p className="notice small">{later.text}</p>}
       {groups.map(([mode, list]) => (
         <div key={mode} className="dep-group">
           <h3 className="group-title"><ModeIcon mode={mode} size={16} /> {t(`mode.${mode}`)}</h3>

@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Connection, FavoriteRide, Station } from '../../../shared/types';
 import { api } from '../api/client';
 import { AdSlot } from '../components/AdSlot';
-import { LineBadge } from '../components/Badges';
-import { clock, countdown, delayLabel, departureTime } from '../format';
+import { LineBadge, ModeIcon } from '../components/Badges';
+import { clock, countdown, delayLabel, departureTime, fallbackNotice } from '../format';
 import { useNow, usePolling } from '../hooks';
 import { useLocale, useT } from '../i18n';
 import { rideFavKey, useFavorites } from '../store/favorites';
 import { showStation, useUi } from '../store/ui';
+
+/** Favourite cards look this far ahead before falling back to the next departures. */
+const FAV_WINDOW_MIN = 120;
 
 /** Lines this much slower than the fastest direct line start unticked (e.g. buses vs. pendeltåg). */
 const isFast = (c: Connection, fastest: number) => c.minutes <= fastest * 1.5 + 5;
@@ -189,13 +192,16 @@ function FavCard({ fav, first, last }: { fav: FavoriteRide; first: boolean; last
   const now = useNow(10_000);
   const { remove, move } = useFavorites.getState();
   const [editing, setEditing] = useState(false);
+  // A stop favourite: no destination and no lines, so everything departing from the stop.
+  const isStop = !fav.toId && !fav.routeIds?.length;
   const { data: deps } = usePolling(
     (s) => api.departures(fav.fromId, {
-      minutes: 120,
+      minutes: FAV_WINDOW_MIN,
       routes: fav.routeIds,
       direction: fav.toId ? undefined : fav.directionId,
       to: fav.toId,
-      limit: 5,
+      limit: isStop ? 6 : 5,
+      fallback: true,
     }, s),
     30_000,
     [fav.id, fav.toId, fav.routeIds?.join(',')],
@@ -206,39 +212,50 @@ function FavCard({ fav, first, last }: { fav: FavoriteRide; first: boolean; last
     for (const d of deps ?? []) if (!seen.has(d.routeId)) seen.set(d.routeId, { routeId: d.routeId, line: d.line, mode: d.mode, color: d.color, textColor: d.textColor });
     return [...seen.values()];
   }, [fav.lines, deps]);
+  const modes = fav.modes ?? [...new Set((deps ?? []).map((d) => d.mode))];
+  const later = fallbackNotice(deps, FAV_WINDOW_MIN, t, locale, now);
 
   return (
     <article className="card fav">
       <div className="fav-head">
         <div className="fav-badges">
-          {lines.slice(0, 4).map((l) => (
-            <LineBadge key={l.routeId} line={l.line} color={l.color} textColor={l.textColor} mode={l.mode} size={lines.length > 1 ? 'md' : 'lg'} />
-          ))}
+          {isStop
+            ? <span className="stop-icon">{modes.slice(0, 3).map((m) => <ModeIcon key={m} mode={m} size={20} />)}</span>
+            : lines.slice(0, 4).map((l) => (
+              <LineBadge key={l.routeId} line={l.line} color={l.color} textColor={l.textColor} mode={l.mode} size={lines.length > 1 ? 'md' : 'lg'} />
+            ))}
         </div>
         <button className="fav-title" onClick={() => showStation(fav.fromId)}>
           <strong>{fav.fromName}{fav.toName ? ` → ${fav.toName}` : ''}</strong>
+          {isStop && <span className="muted small">{t('fav.stop')}</span>}
           {!fav.toName && fav.headsign && <span className="muted">{t('fav.to')} {fav.headsign}</span>}
           {fav.toName && !fav.routeIds && <span className="muted small">{t('fav.allLines')}</span>}
         </button>
         <button className="icon-btn" aria-expanded={editing} aria-label={t('fav.edit')} onClick={() => setEditing(!editing)}>⋯</button>
       </div>
+      {later && <p className="notice small">{later.text}</p>}
       <ol className="ride-deps">
         {deps?.map((d) => {
           const dl = delayLabel(d, t);
+          const when = departureTime(d);
+          const soon = when - now < 20 * 60; // countdown shows minutes, so add the clock time here
           return (
             <li key={d.tripId + d.stopId} className={d.canceled ? 'canceled' : ''}>
               <LineBadge line={d.line} color={d.color} textColor={d.textColor} mode={d.mode} size="sm" />
-              <strong className={`ride-when ${d.realtime ? 'rt' : ''}`}>{countdown(departureTime(d), t, locale, now)}</strong>
+              <strong className={`ride-when ${d.realtime ? 'rt' : ''}`}>
+                {later?.sameDay ? clock(when, locale) : countdown(when, t, locale, now)}
+              </strong>
               <span className="ride-detail muted small">
-                {clock(departureTime(d), locale)}
-                {d.arrival && <> → {clock(d.arrival, locale)} · {Math.round((d.arrival - departureTime(d)) / 60)} min</>}
-                {!d.arrival && <> · {d.headsign}</>}
+                {soon && clock(when, locale)}
+                {d.arrival
+                  ? <>{soon ? ' ' : ''}→ {clock(d.arrival, locale)} · {Math.round((d.arrival - when) / 60)} min</>
+                  : <>{soon ? ' · ' : ''}{d.headsign}</>}
               </span>
               {dl && <span className={d.canceled ? 'bad small' : 'late small'}>{dl}</span>}
             </li>
           );
         })}
-        {deps && deps.length === 0 && <li className="muted">{t('dep.none')}</li>}
+        {deps && deps.length === 0 && <li className="muted">{t('dep.noneAtAll')}</li>}
       </ol>
       {editing && <FavEditor fav={fav} first={first} last={last} onMove={(d) => move(fav.id, d)} onRemove={() => remove(fav.id)} />}
     </article>

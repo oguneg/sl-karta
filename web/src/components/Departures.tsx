@@ -1,9 +1,32 @@
 import type { Departure, Station } from '../../../shared/types';
 import { countdown, delayLabel, departureTime } from '../format';
 import { useLocale, useT } from '../i18n';
-import { lineFavKey, useFavorites } from '../store/favorites';
+import { lineFavKey, stopFavKey, useFavorites } from '../store/favorites';
 import { useUi } from '../store/ui';
 import { LineBadge } from './Badges';
+
+/** Star for a whole stop: favourites everything departing from it. */
+export function StopStar({ station }: { station: Station }) {
+  const t = useT();
+  const id = stopFavKey(station.id);
+  const isFav = useFavorites((s) => s.items.some((x) => x.id === id));
+  const { add, remove } = useFavorites.getState();
+  return (
+    <button
+      className={`star ${isFav ? 'on' : ''}`}
+      aria-pressed={isFav}
+      aria-label={isFav ? t('fav.removeStop') : t('fav.addStop')}
+      title={isFav ? t('fav.removeStop') : t('fav.addStop')}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (isFav) remove(id);
+        else add({ id, fromId: station.id, fromName: station.name, lines: [], modes: station.modes });
+      }}
+    >
+      {isFav ? '★' : '☆'}
+    </button>
+  );
+}
 
 export function StarButton({ station, dep }: { station: Pick<Station, 'id' | 'name'>; dep: Departure }) {
   const t = useT();

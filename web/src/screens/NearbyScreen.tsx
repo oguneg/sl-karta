@@ -3,11 +3,11 @@ import type { Station } from '../../../shared/types';
 import { api } from '../api/client';
 import { AdSlot } from '../components/AdSlot';
 import { LineBadge } from '../components/Badges';
-import { DepartureRow } from '../components/Departures';
+import { DepartureRow, StopStar } from '../components/Departures';
 import { SkeletonRows } from '../components/Sheets';
-import { distance } from '../format';
+import { distance, fallbackNotice } from '../format';
 import { useNow, usePolling } from '../hooks';
-import { useT } from '../i18n';
+import { useLocale, useT } from '../i18n';
 import { showStation } from '../store/ui';
 
 const FALLBACK = { lat: 59.3313, lon: 18.0596 }; // T-Centralen
@@ -64,22 +64,32 @@ export function NearbyScreen() {
 }
 
 function NearbyCard({ station, live }: { station: Station; live: boolean }) {
+  const t = useT();
+  const locale = useLocale();
   const now = useNow();
-  const { data: deps } = usePolling(live ? (s) => api.departures(station.id, { minutes: 60, limit: 6 }, s) : null, 30_000, [station.id, live]);
+  const { data: deps } = usePolling(
+    live ? (s) => api.departures(station.id, { minutes: 60, limit: 6, fallback: true }, s) : null,
+    30_000,
+    [station.id, live],
+  );
   return (
     <article className="card">
-      <button className="card-head" onClick={() => showStation(station.id, station.lat, station.lon)}>
-        <div>
-          <h2>{station.name}</h2>
-          <div className="chips">
-            {station.lines.slice(0, 10).map((l) => (
-              <LineBadge key={l.routeId} line={l.line} color={l.color} textColor={l.textColor} mode={l.mode} size="sm" />
-            ))}
+      <div className="card-top">
+        <button className="card-head" onClick={() => showStation(station.id, station.lat, station.lon)}>
+          <div>
+            <h2>{station.name}</h2>
+            <div className="chips">
+              {station.lines.slice(0, 10).map((l) => (
+                <LineBadge key={l.routeId} line={l.line} color={l.color} textColor={l.textColor} mode={l.mode} size="sm" />
+              ))}
+            </div>
           </div>
-        </div>
-        {station.distance !== undefined && <span className="dist">{distance(station.distance)}</span>}
-      </button>
+          {station.distance !== undefined && <span className="dist">{distance(station.distance)}</span>}
+        </button>
+        <StopStar station={station} />
+      </div>
       {live && !deps && <SkeletonRows n={2} />}
+      {fallbackNotice(deps, 60, t, locale, now) && <p className="notice small">{fallbackNotice(deps, 60, t, locale, now)!.text}</p>}
       {deps && deps.length > 0 && (
         <ul className="dep-list compact">
           {deps.slice(0, 4).map((d) => <DepartureRow key={d.tripId + d.stopId} dep={d} now={now} station={station} />)}
