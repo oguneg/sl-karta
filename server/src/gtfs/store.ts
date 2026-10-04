@@ -1,6 +1,7 @@
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type {
-  Departure, Mode, PlanRequest, PlanResult, RouteDetail, RouteDirection, RouteInfo, Station, StationLine, Vehicle,
+  Departure, Mode, PlanRequest, PlanResult, RouteDetail, RouteDirection, RouteInfo, Station, StationLine, TripDetail,
+  TripStopTime, Vehicle,
 } from '../../../shared/types.ts';
 import { defaultColor, modeFromRouteType, normColor } from '../modes.ts';
 import { bearing, buildTrack, pointAt, type Track } from './track.ts';
@@ -62,6 +63,7 @@ export class GtfsStore {
   private tripStopsCache = new Map<string, TripStop[]>();
   private trackCache = new Map<string, Track | null>();
   private activeCache = new Map<string, ActiveTrip[]>();
+  private networkCache?: GeoJSON.FeatureCollection;
   private vehicleCache?: { at: number; rt?: RealtimeLookup; list: Vehicle[] };
   private q: Record<string, StatementSync> = {};
 
@@ -73,6 +75,7 @@ export class GtfsStore {
     this.calendar = this.db.prepare('SELECT service_id AS id, days, start, end FROM calendar').all() as typeof this.calendar;
     this.q = {
       trip: this.db.prepare('SELECT route_id, direction_id, headsign FROM trips WHERE trip_id = ?'),
+      tripFull: this.db.prepare('SELECT route_id, service_id, headsign, direction_id, shape_id FROM trips WHERE trip_id = ?'),
       activeTrips: this.db.prepare(
         `SELECT tb.trip_id, tb.start, tb.end, t.route_id, t.service_id, t.direction_id, t.headsign, t.shape_id, tb.last_stop
          FROM trip_bounds tb JOIN trips t ON t.trip_id = tb.trip_id WHERE tb.start <= ? AND tb.end >= ?`),
@@ -393,6 +396,87 @@ export class GtfsStore {
     return (best ?? first)?.d;
   }
 
+  /**
+   * Where a trip is at `secs` (seconds since the service day's midnight): index of the last stop
+   * reached (-1 before the first) and the delay used, which is the prediction for the next stop.
+   */
+  private progress(stops: TripStop[], tu: TripRealtime | undefined, base: number, secs: number) {
+    const locate = (t: number) => {
+      let i = -1;
+      for (let k = 0; k < stops.length && stops[k].arr <= t; k++) i = k;
+      return i;
+    };
+    let delay = tu ? this.delayAt(stops, tu, base, 0) : undefined;
+    let i = locate(secs - (delay ?? 0));
+    if (tu && i + 1 < stops.length) {
+      const d2 = this.delayAt(stops, tu, base, i + 1);
+      if (d2 !== undefined && d2 !== delay) {
+        delay = d2;
+        i = locate(secs - delay);
+      }
+    }
+    return { i, delay };
+  }
+
+  /** One trip's stops with scheduled/expected times and progress, plus its track for the map. */
+  tripDetail(tripId: string, now = nowSec(), rt?: RealtimeLookup): TripDetail | undefined {
+    const info = this.q.tripFull.get(tripId) as
+      | { route_id: string; service_id: string; headsign: string; direction_id: number; shape_id: string | null }
+      | undefined;
+    const route = info && this.routes.get(info.route_id);
+    const stops = this.tripStops(tripId);
+    if (!info || !route || stops.length < 2) return undefined;
+
+    // The service day this trip instance runs on: the active one whose run is closest to now.
+    const today = serviceDate(now);
+    let base: number | undefined;
+    let bestGap = Infinity;
+    for (const day of [addDays(today, -1), today, addDays(today, 1)]) {
+      if (!this.activeServices(day).has(info.service_id)) continue;
+      const b = midnight(day);
+      const start = b + stops[0].dep, end = b + stops[stops.length - 1].arr;
+      const gap = now < start ? start - now : now > end ? now - end : 0;
+      if (gap < bestGap) [bestGap, base] = [gap, b];
+    }
+    if (base === undefined) return undefined;
+
+    const tu = rt?.trip(tripId);
+    const { i, delay } = this.progress(stops, tu, base, now - base);
+    const out: TripStopTime[] = stops.map((s, k) => {
+      const st = this.stops.get(s.stop_id);
+      const scheduled = base! + (k === 0 ? s.dep : s.arr);
+      const x = this.realtimeFor(rt, tripId, s.seq, s.stop_id, scheduled, k === 0 ? 'dep' : 'arr');
+      return {
+        stopId: s.stop_id,
+        stationId: st?.stationId ?? s.stop_id,
+        name: st?.name ?? '',
+        lat: st?.lat ?? 0,
+        lon: st?.lon ?? 0,
+        platform: st?.platform,
+        scheduled,
+        expected: x && 'expected' in x ? x.expected : undefined,
+        canceled: x && 'canceled' in x ? true : undefined,
+        passed: k <= i && !(k === i && now - base! - (delay ?? 0) < s.dep),
+      };
+    });
+    const track = this.track(info.shape_id, stops);
+    return {
+      tripId,
+      routeId: route.id,
+      line: route.line,
+      mode: route.mode,
+      color: route.color,
+      textColor: route.textColor,
+      headsign: info.headsign || out[out.length - 1].name,
+      directionId: info.direction_id,
+      delay,
+      canceled: tu?.canceled || undefined,
+      nextIndex: Math.max(0, out.findIndex((x) => !x.passed)),
+      stops: out,
+      shape: track ? track.coords : out.map((s) => [s.lon, s.lat] as [number, number]),
+    };
+  }
+
   /** Vehicle positions from the timetable, shifted by realtime delays, placed on the real track shape. */
   scheduledVehicles(now = nowSec(), rt?: RealtimeLookup): Vehicle[] {
     // Positions only change meaningfully per second; share the result between concurrent clients.
@@ -414,22 +498,7 @@ export class GtfsStore {
         const stops = this.tripStops(r.trip_id);
         if (stops.length < 2) continue;
 
-        // Find where the vehicle is at time t (schedule time, i.e. now minus delay).
-        const locate = (t: number) => {
-          let i = -1;
-          for (let k = 0; k < stops.length && stops[k].arr <= t; k++) i = k;
-          return i;
-        };
-        let delay = tu ? this.delayAt(stops, tu, base, 0) : undefined;
-        let i = locate(secs - (delay ?? 0));
-        if (tu && i + 1 < stops.length) {
-          // Use the prediction for the stop the vehicle is heading to.
-          const d2 = this.delayAt(stops, tu, base, i + 1);
-          if (d2 !== undefined && d2 !== delay) {
-            delay = d2;
-            i = locate(secs - delay);
-          }
-        }
+        let { i, delay } = this.progress(stops, tu, base, secs);
         const t = secs - (delay ?? 0);
         if (i < 0) {
           if (stops[0].dep - t > 60) continue; // not started yet
@@ -503,6 +572,34 @@ export class GtfsStore {
     return detail;
   }
 
+  /**
+   * Faint background network: one simplified track per rail line and direction, as GeoJSON.
+   * Computed once per timetable import.
+   */
+  network(): GeoJSON.FeatureCollection {
+    if (this.networkCache) return this.networkCache;
+    const features: GeoJSON.Feature[] = [];
+    for (const r of this.routes.values()) {
+      if (r.mode !== 'metro' && r.mode !== 'train' && r.mode !== 'tram') continue;
+      const detail = this.routeDetail(r.id);
+      const seen: number[] = [];
+      for (const d of detail?.directions ?? []) {
+        if (d.shape.length < 2) continue;
+        const line = simplify(d.shape, 0.00003);
+        // The opposite direction usually runs on (almost) the same track; skip near-duplicates.
+        if (seen.some((n) => Math.abs(n - line.length) <= Math.max(2, line.length * 0.05))) continue;
+        seen.push(line.length);
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: line.map(([x, y]) => [+x.toFixed(5), +y.toFixed(5)]) },
+          properties: { routeId: r.id, line: r.line, mode: r.mode, color: r.color },
+        });
+      }
+    }
+    this.networkCache = { type: 'FeatureCollection', features };
+    return this.networkCache;
+  }
+
   /** Chain favourite rides into a day plan. */
   plan(req: PlanRequest, rt?: RealtimeLookup): PlanResult {
     let t = localTimeToEpoch(req.start, req.date);
@@ -540,6 +637,32 @@ export class GtfsStore {
 export function strip(d: DepInternal): Departure {
   const { seq: _seq, ...rest } = d;
   return rest;
+}
+
+/** Ramer-Douglas-Peucker line simplification (tolerance in degrees). */
+function simplify(pts: [number, number][], tol: number): [number, number][] {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack: [number, number][] = [[0, pts.length - 1]];
+  const tol2 = tol * tol;
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const [ax, ay] = pts[a], [bx, by] = pts[b];
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    let maxD = -1, idx = -1;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = pts[i];
+      const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+      const d = (px - ax - t * dx) ** 2 + (py - ay - t * dy) ** 2;
+      if (d > maxD) [maxD, idx] = [d, i];
+    }
+    if (maxD > tol2) {
+      keep[idx] = 1;
+      stack.push([a, idx], [idx, b]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
 }
 
 function publicStation(s: StationRec): Station {

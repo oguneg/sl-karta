@@ -91,6 +91,36 @@ export interface RouteDetail extends RouteInfo {
   directions: RouteDirection[];
 }
 
+export interface TripStopTime {
+  stopId: string;
+  stationId: string;
+  name: string;
+  lat: number;
+  lon: number;
+  platform?: string;
+  scheduled: number; // epoch seconds (arrival; departure for the first stop)
+  expected?: number;
+  canceled?: boolean;
+  passed: boolean;
+}
+
+/** One vehicle's journey: every stop with times, which ones are passed, and its track. */
+export interface TripDetail {
+  tripId: string;
+  routeId: string;
+  line: string;
+  mode: Mode;
+  color: string;
+  textColor: string;
+  headsign: string;
+  directionId: number;
+  delay?: number;
+  canceled?: boolean;
+  nextIndex: number;
+  stops: TripStopTime[];
+  shape: [number, number][]; // [lon, lat]
+}
+
 /** A favourite ride: board `line` at `stationId` going in `directionId`. */
 export interface FavoriteRide {
   id: string;

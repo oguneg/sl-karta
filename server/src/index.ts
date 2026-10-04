@@ -60,6 +60,20 @@ app.get<{ Params: { id: string } }>('/api/routes/:id', async (req, reply) => {
   return r;
 });
 
+app.get('/api/network', async (_req, reply) => {
+  const store = requireStore(reply);
+  if (!store) return;
+  reply.header('Cache-Control', 'public, max-age=3600');
+  return store.network();
+});
+
+app.get<{ Params: { id: string } }>('/api/trips/:id', async (req, reply) => {
+  const store = requireStore(reply);
+  if (!store) return;
+  const trip = store.tripDetail(req.params.id, nowSec(), rt);
+  return trip ?? reply.code(404).send({ error: 'not_found' });
+});
+
 app.get<{ Querystring: { bbox?: string; routes?: string; modes?: string } }>('/api/vehicles', async (req, reply) => {
   const store = requireStore(reply);
   if (!store) return;

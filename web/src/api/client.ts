@@ -1,5 +1,5 @@
 import type {
-  Departure, Meta, PlanRequest, PlanResult, RouteDetail, RouteInfo, Station, Vehicle,
+  Departure, Meta, PlanRequest, PlanResult, RouteDetail, RouteInfo, Station, TripDetail, Vehicle,
 } from '../../../shared/types';
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -23,6 +23,8 @@ export const api = {
   meta: (s?: AbortSignal) => get<Meta>('/meta', s),
   routes: (s?: AbortSignal) => get<RouteInfo[]>('/routes', s),
   route: (id: string, s?: AbortSignal) => get<RouteDetail>(`/routes/${encodeURIComponent(id)}`, s),
+  network: (s?: AbortSignal) => get<GeoJSON.FeatureCollection>('/network', s),
+  trip: (id: string, s?: AbortSignal) => get<TripDetail>(`/trips/${encodeURIComponent(id)}`, s),
   vehicles: (bbox?: BBox, s?: AbortSignal) =>
     get<{ time: number; vehicles: Vehicle[] }>(`/vehicles${bbox ? `?bbox=${bboxParam(bbox)}` : ''}`, s),
   nearby: (lat: number, lon: number, radius = 800, s?: AbortSignal) =>

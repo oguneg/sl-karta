@@ -28,6 +28,8 @@ export function defaultColor(mode: Mode, line: string): string {
       if (n >= 40 && n <= 48) return '#ec619f'; // Pendeltåg
       return '#ec619f';
     case 'tram':
+      if (n >= 25 && n <= 26) return '#00a1a9'; // Saltsjöbanan
+      if (n >= 27 && n <= 29) return '#8d5ca6'; // Roslagsbanan
       if (n === 7) return '#878a83'; // Spårväg City
       if (n === 12) return '#778da7'; // Nockebybanan
       if (n === 21) return '#b76020'; // Lidingöbanan

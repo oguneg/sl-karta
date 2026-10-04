@@ -2,7 +2,7 @@ import { GeolocateControl, Map as MlMap, setWorkerUrl, type GeoJSONSource, type 
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useRef } from 'react';
-import type { Mode, Station, Vehicle } from '../../../shared/types';
+import type { Mode, Station, TripDetail, Vehicle } from '../../../shared/types';
 import { api } from '../api/client';
 import { useSettings } from '../store/settings';
 import { useUi } from '../store/ui';
@@ -43,17 +43,17 @@ function paddedBounds(map: MlMap, pad = 0.25): BBox {
 
 /** Draw a vehicle marker: a disc with a pointer showing heading (or a plain disc). */
 function vehicleImage(color: string, pointer: boolean) {
-  const ratio = 2, size = 40;
+  const ratio = 2, size = 48;
   const c = document.createElement('canvas');
   c.width = c.height = size * ratio;
   const ctx = c.getContext('2d')!;
   ctx.scale(ratio, ratio);
-  const cx = size / 2, cy = size / 2, r = 11;
+  const cx = size / 2, cy = size / 2, r = 14;
   ctx.beginPath();
   if (pointer) {
     // Circle with a tip pointing up (north); rotated by the map to the bearing.
-    const a = Math.asin(6 / r);
-    ctx.moveTo(cx, cy - r - 7);
+    const a = Math.asin(7 / r);
+    ctx.moveTo(cx, cy - r - 8);
     ctx.arc(cx, cy, r, -Math.PI / 2 + a, -Math.PI / 2 - a + Math.PI * 2);
     ctx.closePath();
   } else {
@@ -72,7 +72,22 @@ function vehicleImage(color: string, pointer: boolean) {
 
 function addLayers(map: MlMap, dark: boolean) {
   if (map.getSource('vehicles')) return;
+  map.addSource('network', { type: 'geojson', data: emptyFc() });
   map.addSource('route', { type: 'geojson', data: emptyFc() });
+  map.addLayer({
+    id: 'network-line', type: 'line', source: 'network',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': ['get', 'color'],
+      'line-opacity': dark ? 0.45 : 0.35,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 9, 1.5, 13, 3, 16, 5],
+    },
+  });
+  // Wide invisible copy so the thin line is easy to tap.
+  map.addLayer({
+    id: 'network-hit', type: 'line', source: 'network',
+    paint: { 'line-color': '#000', 'line-opacity': 0, 'line-width': 14 },
+  });
   map.addSource('stations', { type: 'geojson', data: emptyFc() });
   map.addSource('vehicles', { type: 'geojson', data: emptyFc() });
 
@@ -84,13 +99,18 @@ function addLayers(map: MlMap, dark: boolean) {
   map.addLayer({
     id: 'route-line', type: 'line', source: 'route', filter: ['==', ['geometry-type'], 'LineString'],
     layout: { 'line-join': 'round', 'line-cap': 'round' },
-    paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 15, 6] },
+    paint: {
+      'line-color': ['case', ['==', ['get', 'passed'], true], '#9ca3af', ['get', 'color']],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 15, 6],
+    },
   });
   map.addLayer({
     id: 'route-stops', type: 'circle', source: 'route', filter: ['==', ['geometry-type'], 'Point'],
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 15, 5],
-      'circle-color': '#fff', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 2,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['case', ['==', ['get', 'passed'], true], 1.5, 2.5], 15, ['case', ['==', ['get', 'passed'], true], 3.5, 5]],
+      'circle-color': '#fff',
+      'circle-stroke-color': ['case', ['==', ['get', 'passed'], true], '#9ca3af', ['get', 'color']],
+      'circle-stroke-width': 2,
     },
   });
   map.addLayer({
@@ -118,10 +138,17 @@ function addLayers(map: MlMap, dark: boolean) {
       'icon-rotation-alignment': 'map',
       'icon-allow-overlap': true,
       'icon-ignore-placement': true,
-      'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.55, 13, 0.85, 16, 1],
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 9, 0.65, 12, 0.9, 15, 1.05],
       'text-field': ['get', 'line'],
       'text-font': FONT,
-      'text-size': ['interpolate', ['linear'], ['zoom'], 9, 8, 13, 10.5, 16, 12],
+      // Shrink long labels (e.g. "176X", "1234") so they stay inside the disc.
+      'text-size': [
+        'interpolate', ['linear'], ['zoom'],
+        9, ['match', ['length', ['get', 'line']], 1, 9, 2, 9, 3, 8, 6.5],
+        12, ['match', ['length', ['get', 'line']], 1, 13, 2, 13, 3, 11.5, 9.5],
+        15, ['match', ['length', ['get', 'line']], 1, 15, 2, 14.5, 3, 13, 10.5],
+      ],
+      'text-letter-spacing': ['match', ['length', ['get', 'line']], 4, -0.04, 0],
       'text-allow-overlap': true,
       'text-ignore-placement': true,
       'symbol-sort-key': ['get', 'sort'],
@@ -132,6 +159,31 @@ function addLayers(map: MlMap, dark: boolean) {
       'text-opacity': ['case', ['get', 'dim'], 0.25, 1],
     },
   });
+}
+
+/** Map features for a selected trip: track and stops, with the part already travelled greyed out. */
+function tripFeatures(trip: TripDetail, vehicles: Map<string, Vehicle>): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  // Split the track at the vertex closest to the vehicle (or the next stop if it isn't on screen).
+  const v = [...vehicles.values()].find((x) => x.tripId === trip.tripId);
+  const next = trip.stops[trip.nextIndex];
+  const at: [number, number] | undefined = v ? [v.lon, v.lat] : next ? [next.lon, next.lat] : undefined;
+  let split = 0;
+  if (at && trip.stops.some((s) => s.passed)) {
+    let best = Infinity;
+    trip.shape.forEach((p, i) => {
+      const d = (p[0] - at[0]) ** 2 + (p[1] - at[1]) ** 2;
+      if (d < best) [best, split] = [d, i];
+    });
+  }
+  if (split > 0) {
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: trip.shape.slice(0, split + 1) }, properties: { color: trip.color, passed: true } });
+  }
+  features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: trip.shape.slice(split) }, properties: { color: trip.color, passed: false } });
+  for (const s of trip.stops) {
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lon, s.lat] }, properties: { color: trip.color, id: s.stationId, passed: s.passed } });
+  }
+  return { type: 'FeatureCollection', features };
 }
 
 const MODE_SORT: Record<Mode, number> = { bus: 1, ship: 2, tram: 3, train: 4, metro: 5, other: 0 };
@@ -146,13 +198,14 @@ export function MapView() {
   const theme = useResolvedTheme();
   const modes = useSettings((s) => s.modes);
   const highlight = useUi((s) => s.highlightRoute);
+  const trip = useUi((s) => s.trip);
   const flyTo = useUi((s) => s.flyTo);
   const renderRef = useRef<() => void>(() => {});
-  const loadRouteRef = useRef<(id?: string) => Promise<void>>(undefined);
+  const loadRouteRef = useRef<() => Promise<void>>(undefined);
   const themeRef = useRef(theme);
   themeRef.current = theme;
-  const stateRef = useRef({ modes, highlight });
-  stateRef.current = { modes, highlight };
+  const stateRef = useRef({ modes, highlight, trip });
+  stateRef.current = { modes, highlight, trip };
 
   // Create the map once.
   useEffect(() => {
@@ -168,6 +221,7 @@ export function MapView() {
     });
     map.touchZoomRotate.disableRotation();
     mapRef.current = map;
+    if (import.meta.env.DEV) (window as unknown as { __map?: MlMap }).__map = map; // debugging aid
     map.addControl(new GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), 'bottom-right');
 
     map.on('styleimagemissing', (e: { id: string }) => {
@@ -178,8 +232,20 @@ export function MapView() {
       addLayers(map, themeRef.current === 'dark');
       renderRef.current();
       void loadStations();
-      void loadRoute(stateRef.current.highlight);
+      void loadRoute();
+      void loadNetwork();
     });
+
+    // --- Background rail network ---------------------------------------------------------------
+    let networkData: GeoJSON.FeatureCollection | undefined;
+    const loadNetwork = async () => {
+      try {
+        networkData ??= await api.network();
+        (map.getSource('network') as GeoJSONSource | undefined)?.setData(networkData);
+      } catch {
+        networkData = undefined; // retried on next style load
+      }
+    };
 
     // --- Vehicles --------------------------------------------------------------------
     const render = () => {
@@ -271,10 +337,15 @@ export function MapView() {
 
     // --- Highlighted route ---------------------------------------------------------------
     let routeCtrl: AbortController | undefined;
-    const loadRoute = async (routeId?: string) => {
+    const loadRoute = async () => {
       const src = map.getSource('route') as GeoJSONSource | undefined;
       if (!src) return;
       routeCtrl?.abort();
+      const { trip, highlight: routeId } = stateRef.current;
+      if (trip) {
+        src.setData(tripFeatures(trip, vehiclesRef.current));
+        return;
+      }
       if (!routeId) {
         src.setData(emptyFc());
         return;
@@ -316,7 +387,12 @@ export function MapView() {
     const onVehicleClick = (e: MapLayerMouseEvent) => {
       const id = e.features?.[0]?.properties?.id as string | undefined;
       const v = id && vehiclesRef.current.get(id);
-      if (v) useUi.getState().open({ kind: 'vehicle', vehicle: v });
+      if (!v) return;
+      useUi.getState().open({ kind: 'vehicle', vehicle: v });
+      // On phones the sheet covers the lower half: keep the vehicle in view above it.
+      const h = map.getContainer().clientHeight;
+      const mobile = window.innerWidth < 900;
+      map.easeTo({ center: [v.lon, v.lat], padding: { top: 0, bottom: mobile ? h * 0.5 : 0, left: 0, right: 0 }, duration: 600 });
     };
     const onStationClick = (e: MapLayerMouseEvent) => {
       const id = e.features?.[0]?.properties?.id as string | undefined;
@@ -325,7 +401,14 @@ export function MapView() {
     map.on('click', 'vehicles', onVehicleClick);
     map.on('click', 'stations', onStationClick);
     map.on('click', 'route-stops', onStationClick);
-    for (const layer of ['vehicles', 'stations', 'route-stops']) {
+    map.on('click', 'network-hit', (e: MapLayerMouseEvent) => {
+      const above = map.queryRenderedFeatures(e.point, { layers: ['vehicles', 'stations', 'route-stops'].filter((l) => map.getLayer(l)) });
+      if (above.length) return;
+      const ids = [...new Set((e.features ?? []).map((f) => f.properties?.routeId as string).filter(Boolean))];
+      if (ids.length === 1) useUi.getState().open({ kind: 'route', id: ids[0] });
+      else if (ids.length > 1) useUi.getState().open({ kind: 'lines', routeIds: ids });
+    });
+    for (const layer of ['vehicles', 'stations', 'route-stops', 'network-hit']) {
       map.on('mouseenter', layer, () => (map.getCanvas().style.cursor = 'pointer'));
       map.on('mouseleave', layer, () => (map.getCanvas().style.cursor = ''));
     }
@@ -335,7 +418,8 @@ export function MapView() {
       else clearTimeout(vehTimer);
     };
     document.addEventListener('visibilitychange', onVis);
-    map.once('load', () => void loadVehicles());
+    // Don't wait for base-map tiles; vehicles render as soon as our layers exist (style.load).
+    void loadVehicles();
 
     return () => {
       document.removeEventListener('visibilitychange', onVis);
@@ -362,8 +446,8 @@ export function MapView() {
   }, [modes, highlight]);
 
   useEffect(() => {
-    void loadRouteRef.current?.(highlight);
-  }, [highlight]);
+    void loadRouteRef.current?.();
+  }, [highlight, trip]);
 
   useEffect(() => {
     if (flyTo) mapRef.current?.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: flyTo.zoom ?? Math.max(14, mapRef.current.getZoom()) });

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Departure, Mode, Station } from '../../../shared/types';
+import type { Departure, Mode, Station, TripStopTime } from '../../../shared/types';
 import { api } from '../api/client';
 import { useNow, usePolling } from '../hooks';
-import { useT } from '../i18n';
+import { clock, countdown } from '../format';
+import { useLocale, useT } from '../i18n';
 import { showStation, useUi } from '../store/ui';
 import { LineBadge, ModeIcon } from './Badges';
 import { DepartureRow } from './Departures';
@@ -24,6 +25,7 @@ export function SheetHost() {
       {sheet.kind === 'station' && <StationSheet id={sheet.id} />}
       {sheet.kind === 'vehicle' && <VehicleSheet />}
       {sheet.kind === 'route' && <RouteSheet id={sheet.id} directionId={sheet.directionId} />}
+      {sheet.kind === 'lines' && <LinePicker routeIds={sheet.routeIds} />}
     </section>
   );
 }
@@ -100,31 +102,103 @@ export function SkeletonRows({ n = 5 }: { n?: number }) {
 
 function VehicleSheet() {
   const t = useT();
+  const locale = useLocale();
+  const now = useNow(10_000);
   const sheet = useUi((s) => s.sheet);
-  const { open, setHighlight } = useUi.getState();
-  const highlight = useUi((s) => s.highlightRoute);
-  if (sheet?.kind !== 'vehicle') return null;
-  const v = sheet.vehicle;
-  const delayMin = v.delay !== undefined ? Math.round(v.delay / 60) : undefined;
+  const { open, setHighlight, setTrip } = useUi.getState();
+  const [showPassed, setShowPassed] = useState(false);
+  const v = sheet?.kind === 'vehicle' ? sheet.vehicle : undefined;
+  const tripId = v?.tripId;
+  const { data: trip, error } = usePolling(tripId ? (s) => api.trip(tripId, s) : null, 20_000, [tripId]);
+
+  // Selecting a vehicle shows its line and journey on the map; clear both when the sheet closes.
+  useEffect(() => {
+    setHighlight(v?.routeId);
+    setShowPassed(false);
+    return () => {
+      setTrip(undefined);
+      setHighlight(undefined);
+    };
+  }, [tripId, v?.routeId, setHighlight, setTrip]);
+  useEffect(() => setTrip(trip), [trip, setTrip]);
+
+  if (!v) return null;
+  const delay = trip?.delay ?? v.delay;
+  const delayMin = delay !== undefined ? Math.round(delay / 60) : undefined;
+  const passed = trip ? trip.stops.slice(0, trip.nextIndex) : [];
+  const upcoming = trip ? trip.stops.slice(trip.nextIndex) : [];
+  const next = upcoming[0];
+  const when = (s: TripStopTime) => s.expected ?? s.scheduled;
+
+  const stopRow = (s: TripStopTime, i: number, isNext = false) => {
+    const late = s.expected !== undefined && Math.abs(s.expected - s.scheduled) >= 60;
+    const mins = Math.floor((when(s) - now) / 60); // same rounding as countdown()
+    return (
+      <li key={s.stopId + i} className={`${s.passed ? 'passed' : ''} ${isNext ? 'next' : ''} ${s.canceled ? 'canceled' : ''}`}>
+        <button onClick={() => showStation(s.stationId, s.lat, s.lon)}>
+          <span className="trip-stop-name">
+            {s.name}
+            {s.platform && <span className="muted small"> · {t('dep.platform', { p: s.platform })}</span>}
+          </span>
+          <span className="trip-stop-time">
+            <strong className={s.expected !== undefined ? 'rt' : ''}>{clock(when(s), locale)}</strong>
+            {late && <s className="muted small">{clock(s.scheduled, locale)}</s>}
+            {!s.passed && mins >= 0 && mins < 60 && !late && <span className="muted small">{mins === 0 ? t('dep.now') : `${mins} ${t('dep.min')}`}</span>}
+          </span>
+        </button>
+      </li>
+    );
+  };
+
   return (
     <div className="sheet-body">
       <header className="sheet-head row">
-        <LineBadge line={v.line ?? '?'} color={v.color} mode={v.mode} size="lg" />
+        <LineBadge line={v.line ?? '?'} color={v.color} textColor={trip?.textColor} mode={v.mode} size="lg" />
         <div>
-          <h2>{v.headsign ? t('vehicle.towards', { h: v.headsign }) : t(`mode.${v.mode}`)}</h2>
+          <h2>{t('vehicle.towards', { h: trip?.headsign ?? v.headsign ?? '' })}</h2>
           <p className="muted small">
             {t(`mode.${v.mode}`)} · {v.source === 'gps' ? t('vehicle.gps') : t('vehicle.estimated')}
-            {delayMin !== undefined && delayMin !== 0 && <> · <span className="late">{t('dep.late', { n: delayMin })}</span></>}
+            {delayMin !== undefined && (delayMin === 0
+              ? <> · <span className="rt">{t('trip.onTime')}</span></>
+              : delayMin > 0
+                ? <> · <span className="late">{t('dep.late', { n: delayMin })}</span></>
+                : <> · <span className="rt">{t('dep.early', { n: -delayMin })}</span></>)}
           </p>
         </div>
       </header>
+
+      {!tripId || (error && !trip) ? <p className="empty">{t('trip.unavailable')}</p> : null}
+      {tripId && !trip && !error && <SkeletonRows n={4} />}
+
+      {next && (
+        <button className="trip-next" onClick={() => showStation(next.stationId, next.lat, next.lon)} style={{ ['--line' as string]: v.color }}>
+          <span className="muted small">{t('trip.next')}</span>
+          <strong className="trip-next-name">{next.name}</strong>
+          <span className="trip-next-time">
+            <strong className={next.expected !== undefined ? 'rt' : ''}>{countdown(when(next), t, locale, now)}</strong>
+            <span className="muted small">{clock(when(next), locale)}</span>
+          </span>
+        </button>
+      )}
+
+      {trip && (
+        <ol className="trip-stops" style={{ ['--line' as string]: trip.color }}>
+          {passed.length > 0 && (
+            <li className="trip-toggle">
+              <button onClick={() => setShowPassed(!showPassed)}>
+                {showPassed ? t('trip.hideEarlier') : t('trip.earlier', { n: passed.length })}
+              </button>
+            </li>
+          )}
+          {showPassed && passed.map((s, i) => stopRow(s, i))}
+          {upcoming.map((s, i) => stopRow(s, passed.length + i, i === 0))}
+        </ol>
+      )}
+
       {v.routeId && (
         <div className="actions">
-          <button className="btn" onClick={() => setHighlight(highlight === v.routeId ? undefined : v.routeId)}>
-            {highlight === v.routeId ? t('line.hide') : t('line.show')}
-          </button>
-          <button className="btn primary" onClick={() => open({ kind: 'route', id: v.routeId!, directionId: v.directionId })}>
-            {t('line.stops')}
+          <button className="btn" onClick={() => open({ kind: 'route', id: v.routeId!, directionId: v.directionId })}>
+            {t('trip.wholeLine')}
           </button>
         </div>
       )}
@@ -172,6 +246,30 @@ function RouteSheet({ id, directionId }: { id: string; directionId?: number }) {
         </ol>
       )}
       {!route && <SkeletonRows />}
+    </div>
+  );
+}
+
+function LinePicker({ routeIds }: { routeIds: string[] }) {
+  const t = useT();
+  const open = useUi((s) => s.open);
+  const { data: routes } = usePolling((s) => api.routes(s), 3600_000, []);
+  // Server returns routes sorted (metro, train, tram, bus; then by number): keep that order.
+  const list = (routes ?? []).filter((r) => routeIds.includes(r.id));
+  return (
+    <div className="sheet-body">
+      <header className="sheet-head"><h2>{t('line.pick')}</h2></header>
+      {!routes && <SkeletonRows n={routeIds.length} />}
+      <ul className="line-pick">
+        {list.map((r) => (
+          <li key={r.id}>
+            <button onClick={() => open({ kind: 'route', id: r.id })}>
+              <LineBadge line={r.line} color={r.color} textColor={r.textColor} mode={r.mode} />
+              <span>{r.name || t(`mode.${r.mode}`)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

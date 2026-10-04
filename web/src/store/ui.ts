@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Meta, Vehicle } from '../../../shared/types';
+import type { Meta, TripDetail, Vehicle } from '../../../shared/types';
 
 export type Tab = 'map' | 'nearby' | 'favorites' | 'plan' | 'settings';
 
@@ -7,6 +7,8 @@ export type Sheet =
   | { kind: 'station'; id: string }
   | { kind: 'vehicle'; vehicle: Vehicle }
   | { kind: 'route'; id: string; directionId?: number }
+  /** Several lines share the tapped track: let the user pick one. */
+  | { kind: 'lines'; routeIds: string[] }
   | null;
 
 interface UiState {
@@ -14,6 +16,8 @@ interface UiState {
   sheet: Sheet;
   /** Route drawn on the map and whose vehicles are emphasised. */
   highlightRoute?: string;
+  /** Selected vehicle's journey, drawn on the map instead of the generic line. */
+  trip?: TripDetail;
   flyTo?: { lat: number; lon: number; zoom?: number; seq: number };
   meta?: Meta;
   offline: boolean;
@@ -21,6 +25,7 @@ interface UiState {
   open(sheet: Sheet): void;
   close(): void;
   setHighlight(routeId?: string): void;
+  setTrip(trip?: TripDetail): void;
   fly(lat: number, lon: number, zoom?: number): void;
   setMeta(m?: Meta, offline?: boolean): void;
 }
@@ -33,6 +38,7 @@ export const useUi = create<UiState>()((set) => ({
   open: (sheet) => set({ sheet }),
   close: () => set({ sheet: null }),
   setHighlight: (highlightRoute) => set({ highlightRoute }),
+  setTrip: (trip) => set({ trip }),
   fly: (lat, lon, zoom) => set((s) => ({ flyTo: { lat, lon, zoom, seq: (s.flyTo?.seq ?? 0) + 1 } })),
   setMeta: (meta, offline = false) => set({ meta, offline }),
 }));
