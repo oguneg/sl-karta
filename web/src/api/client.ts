@@ -1,5 +1,5 @@
 import type {
-  Departure, Meta, PlanRequest, PlanResult, RouteDetail, RouteInfo, Station, TripDetail, Vehicle,
+  Connection, Departure, Meta, PlanRequest, PlanResult, RouteDetail, RouteInfo, Station, TripDetail, Vehicle,
 } from '../../../shared/types';
 
 const BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -23,6 +23,8 @@ export const api = {
   meta: (s?: AbortSignal) => get<Meta>('/meta', s),
   routes: (s?: AbortSignal) => get<RouteInfo[]>('/routes', s),
   route: (id: string, s?: AbortSignal) => get<RouteDetail>(`/routes/${encodeURIComponent(id)}`, s),
+  connections: (from: string, to: string, s?: AbortSignal) =>
+    get<Connection[]>(`/connections?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, s),
   network: (s?: AbortSignal) => get<GeoJSON.FeatureCollection>('/network', s),
   trip: (id: string, s?: AbortSignal) => get<TripDetail>(`/trips/${encodeURIComponent(id)}`, s),
   vehicles: (bbox?: BBox, s?: AbortSignal) =>
@@ -36,12 +38,13 @@ export const api = {
   station: (id: string, s?: AbortSignal) => get<Station>(`/stations/${encodeURIComponent(id)}`, s),
   departures: (
     id: string,
-    opts: { minutes?: number; route?: string; direction?: number; limit?: number; from?: number } = {},
+    opts: { minutes?: number; routes?: string[]; direction?: number; to?: string; limit?: number; from?: number } = {},
     s?: AbortSignal,
   ) => {
     const p = new URLSearchParams();
     if (opts.minutes) p.set('minutes', String(opts.minutes));
-    if (opts.route) p.set('route', opts.route);
+    if (opts.routes?.length) p.set('routes', opts.routes.join(','));
+    if (opts.to) p.set('to', opts.to);
     if (opts.direction !== undefined) p.set('direction', String(opts.direction));
     if (opts.limit) p.set('limit', String(opts.limit));
     if (opts.from) p.set('from', String(opts.from));

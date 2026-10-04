@@ -1,13 +1,13 @@
 import type { Departure, Station } from '../../../shared/types';
 import { countdown, delayLabel, departureTime } from '../format';
 import { useLocale, useT } from '../i18n';
-import { favKey, useFavorites } from '../store/favorites';
+import { lineFavKey, useFavorites } from '../store/favorites';
 import { useUi } from '../store/ui';
 import { LineBadge } from './Badges';
 
 export function StarButton({ station, dep }: { station: Pick<Station, 'id' | 'name'>; dep: Departure }) {
   const t = useT();
-  const id = favKey({ stationId: station.id, routeId: dep.routeId, directionId: dep.directionId });
+  const id = lineFavKey(station.id, dep.routeId, dep.directionId);
   const isFav = useFavorites((s) => s.items.some((x) => x.id === id));
   const { add, remove } = useFavorites.getState();
   return (
@@ -20,8 +20,13 @@ export function StarButton({ station, dep }: { station: Pick<Station, 'id' | 'na
         e.stopPropagation();
         if (isFav) remove(id);
         else add({
-          stationId: station.id, stationName: station.name, routeId: dep.routeId, line: dep.line, mode: dep.mode,
-          color: dep.color, textColor: dep.textColor, directionId: dep.directionId, headsign: dep.headsign,
+          id,
+          fromId: station.id,
+          fromName: station.name,
+          routeIds: [dep.routeId],
+          directionId: dep.directionId,
+          headsign: dep.headsign,
+          lines: [{ routeId: dep.routeId, line: dep.line, mode: dep.mode, color: dep.color, textColor: dep.textColor }],
         });
       }}
     >

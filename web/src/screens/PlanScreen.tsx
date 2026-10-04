@@ -24,7 +24,7 @@ export function PlanScreen() {
         legs: validLegs.map((l) => {
           const f = favById.get(l.favoriteId)!;
           return {
-            stationId: f.stationId, routeId: f.routeId, directionId: f.directionId, toStationId: f.toStationId,
+            stationId: f.fromId, routeIds: f.routeIds, directionId: f.toId ? undefined : f.directionId, toStationId: f.toId,
             notBefore: l.notBefore || undefined, transferMinutes: l.transferMinutes,
           };
         }),
@@ -64,23 +64,25 @@ export function PlanScreen() {
           const dep = r?.departure;
           const dl = dep && delayLabel(dep, t);
           return (
-            <li key={leg.key} className="tl-leg" style={{ ['--line' as string]: f.color }}>
+            <li key={leg.key} className="tl-leg" style={{ ['--line' as string]: dep?.color ?? f.lines[0]?.color }}>
               <div className="tl-time">
                 {dep ? <strong className={dep.realtime ? 'rt' : ''}>{clock(departureTime(dep), locale)}</strong> : <strong>–</strong>}
                 {r?.arrival && <span className="muted small">{clock(r.arrival, locale)}</span>}
               </div>
               <div className="tl-body">
                 <div className="row">
-                  <LineBadge line={f.line} color={f.color} textColor={f.textColor} mode={f.mode} />
+                  {dep
+                    ? <LineBadge line={dep.line} color={dep.color} textColor={dep.textColor} mode={dep.mode} />
+                    : f.lines[0] && <LineBadge line={f.lines[0].line} color={f.lines[0].color} textColor={f.lines[0].textColor} mode={f.lines[0].mode} />}
                   <div className="tl-title">
-                    <strong>{f.stationName}</strong>
+                    <strong>{f.fromName}{f.toName ? ` → ${f.toName}` : ''}</strong>
                     <span className="muted">{t('fav.to')} {dep?.headsign || f.headsign}</span>
                   </div>
                 </div>
                 {dep?.platform && <div className="muted small">{t('dep.platform', { p: dep.platform })}</div>}
                 {dl && <div className={dep?.canceled ? 'bad small' : 'late small'}>{dl}</div>}
-                {f.toStationName && r?.arrival && (
-                  <div className="small">{t('plan.arrive')} {f.toStationName} {clock(r.arrival, locale)}</div>
+                {f.toName && r?.arrival && (
+                  <div className="small">{t('plan.arrive')} {f.toName} {clock(r.arrival, locale)}</div>
                 )}
                 {r?.error === 'no_departure' && <div className="bad small">{t('plan.noDep')}</div>}
                 {r?.error === 'no_arrival' && <div className="bad small">{t('plan.noArr')}</div>}
@@ -137,7 +139,7 @@ function AddLeg({ favorites, onAdd }: { favorites: FavoriteRide[]; onAdd: (id: s
         <option value="">{t('plan.pick')}</option>
         {favorites.map((f) => (
           <option key={f.id} value={f.id}>
-            {f.line} · {f.stationName} → {f.toStationName ?? f.headsign}
+            {f.lines.map((l) => l.line).join('/')} · {f.fromName} → {f.toName ?? f.headsign}
           </option>
         ))}
       </select>

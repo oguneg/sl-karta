@@ -60,6 +60,14 @@ app.get<{ Params: { id: string } }>('/api/routes/:id', async (req, reply) => {
   return r;
 });
 
+app.get<{ Querystring: { from: string; to: string } }>('/api/connections', async (req, reply) => {
+  const store = requireStore(reply);
+  if (!store) return;
+  if (!req.query.from || !req.query.to) return reply.code(400).send({ error: 'from_to_required' });
+  reply.header('Cache-Control', 'public, max-age=3600');
+  return store.connections(req.query.from, req.query.to);
+});
+
 app.get('/api/network', async (_req, reply) => {
   const store = requireStore(reply);
   if (!store) return;
@@ -162,7 +170,7 @@ app.get<{ Params: { id: string } }>('/api/stations/:id', async (req, reply) => {
   return s ?? reply.code(404).send({ error: 'not_found' });
 });
 
-app.get<{ Params: { id: string }; Querystring: { from?: string; minutes?: string; route?: string; direction?: string; limit?: string } }>(
+app.get<{ Params: { id: string }; Querystring: { from?: string; minutes?: string; route?: string; routes?: string; direction?: string; to?: string; limit?: string } }>(
   '/api/stations/:id/departures',
   async (req, reply) => {
     const store = requireStore(reply);
@@ -170,8 +178,9 @@ app.get<{ Params: { id: string }; Querystring: { from?: string; minutes?: string
     const q = req.query;
     return store
       .departures(req.params.id, num(q.from, nowSec()), Math.min(num(q.minutes, 60)!, 24 * 60), {
-        routeId: q.route || undefined,
-        directionId: q.route ? num(q.direction) : undefined,
+        routeIds: (q.routes ?? q.route)?.split(',').filter(Boolean),
+        directionId: num(q.direction),
+        toStationId: q.to || undefined,
         limit: Math.min(num(q.limit, 40)!, 200),
         rt,
       })

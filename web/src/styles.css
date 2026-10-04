@@ -523,3 +523,41 @@ ul.plain { list-style: none; padding: 0; margin: 0.5rem 0; display: grid; gap: 0
   border-radius: 5px; height: 20px; padding: 0 6px;
   font-size: 0.72rem; color: var(--muted);
 }
+
+/* ---------- Favourite rides ---------- */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.ride-editor { display: grid; gap: 0.75rem; margin-bottom: 0.75rem; }
+.picked {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 42px; padding: 0 0.3rem 0 0.75rem;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+  color: var(--text); font-size: 1rem;
+}
+.stop-picker { position: relative; }
+.picker-results {
+  list-style: none; margin: 0; padding: 0.25rem;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+}
+.picker-results li > button {
+  width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
+  border: 0; background: none; text-align: left; padding: 0.5rem; border-radius: 8px; color: var(--text);
+}
+.picker-results li > button:hover { background: var(--surface-2); }
+.picker-results .lines { display: flex; gap: 3px; }
+.line-toggles { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.line-toggle {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.6rem 0.3rem 0.35rem;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface);
+  color: var(--muted); font-size: 0.85rem; opacity: 0.55;
+}
+.line-toggle.on { opacity: 1; color: var(--text); border-color: var(--accent); background: var(--surface-2); }
+.fav-badges { display: flex; gap: 4px; flex-wrap: wrap; max-width: 45%; }
+.ride-deps { list-style: none; margin: 0.6rem 0 0; padding: 0; display: grid; gap: 0.35rem; }
+.ride-deps li {
+  display: grid; grid-template-columns: auto 4.2rem 1fr auto; align-items: center; gap: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.ride-deps li:first-child .ride-when { font-size: 1.2rem; }
+.ride-deps li.canceled .ride-when { text-decoration: line-through; color: var(--muted); }
+.ride-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

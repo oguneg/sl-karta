@@ -1,6 +1,6 @@
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import type {
-  Departure, Mode, PlanRequest, PlanResult, RouteDetail, RouteDirection, RouteInfo, Station, StationLine, TripDetail,
+  Connection, Departure, Mode, PlanRequest, PlanResult, RouteDetail, RouteDirection, RouteInfo, Station, StationLine, TripDetail,
   TripStopTime, Vehicle,
 } from '../../../shared/types.ts';
 import { defaultColor, modeFromRouteType, normColor } from '../modes.ts';
@@ -40,6 +40,10 @@ interface TripStop { seq: number; stop_id: string; arr: number; dep: number }
 
 // Same-named stops this close form one place (Slussen's bus terminals are ~540 m from the metro).
 const PLACE_RADIUS_M = 650;
+// Stations whose name contains the other's as a whole word, this close, are the same interchange.
+const LINKED_RADIUS_M = 400;
+// Interchanges SL names differently (normalized names).
+const PLACE_ALIASES = [['t centralen', 'stockholm city']];
 
 const MODE_ORDER: Mode[] = ['metro', 'train', 'tram', 'bus', 'ship', 'other'];
 
@@ -67,7 +71,6 @@ export class GtfsStore {
   private trackCache = new Map<string, Track | null>();
   private activeCache = new Map<string, ActiveTrip[]>();
   private networkCache?: GeoJSON.FeatureCollection;
-  private byName = new Map<string, StationRec[]>();
   private placeCache = new Map<string, StationRec[]>();
   private vehicleCache?: { at: number; rt?: RealtimeLookup; list: Vehicle[] };
   private q: Record<string, StatementSync> = {};
@@ -159,11 +162,6 @@ export class GtfsStore {
       st.lines = lines;
       st.modes = [...new Set(lines.map((l) => l.mode))].sort((a, b) => MODE_ORDER.indexOf(a) - MODE_ORDER.indexOf(b));
     }
-    for (const st of this.stations.values()) {
-      const list = this.byName.get(st.search);
-      if (list) list.push(st);
-      else this.byName.set(st.search, [st]);
-    }
   }
 
   /** Service IDs running on a given YYYYMMDD date. */
@@ -208,7 +206,24 @@ export class GtfsStore {
   private place(s: StationRec): StationRec[] {
     let p = this.placeCache.get(s.id);
     if (!p) {
-      p = (this.byName.get(s.search) ?? [s]).filter((o) => o === s || haversine(s.lat, s.lon, o.lat, o.lon) <= PLACE_RADIUS_M);
+      const words = ` ${s.search} `;
+      const alias = PLACE_ALIASES.find((pair) => pair.includes(s.search));
+      p = [];
+      for (const o of this.stations.values()) {
+        if (o === s) {
+          p.push(o);
+          continue;
+        }
+        if (Math.abs(o.lat - s.lat) > 0.007 || Math.abs(o.lon - s.lon) > 0.013) continue; // ~700 m
+        const d = haversine(s.lat, s.lon, o.lat, o.lon);
+        const other = ` ${o.search} `;
+        if (
+          (o.search === s.search && d <= PLACE_RADIUS_M) ||
+          // "Odenplan" + "Stockholm Odenplan", "Kista" + "Kista centrum": one name contains the other.
+          ((words.includes(other) || other.includes(words)) && d <= LINKED_RADIUS_M) ||
+          (alias?.includes(o.search) && d <= PLACE_RADIUS_M)
+        ) p.push(o);
+      }
       this.placeCache.set(s.id, p);
     }
     return p;
@@ -353,25 +368,50 @@ export class GtfsStore {
     return { expected, delay: expected - scheduledAbs };
   }
 
+  /**
+   * Departures from a place. Optionally only some lines (`routeIds`, `directionId`) and/or only
+   * trips that later stop at `toStationId`; then each departure carries its arrival time there.
+   */
   departures(
     stationId: string,
     from = nowSec(),
     minutes = 60,
-    opts: { routeId?: string; directionId?: number; limit?: number; rt?: RealtimeLookup } = {},
+    opts: {
+      routeIds?: string[];
+      directionId?: number;
+      toStationId?: string;
+      limit?: number;
+      rt?: RealtimeLookup;
+    } = {},
   ): DepInternal[] {
     const st = this.rec(stationId);
     if (!st) return [];
     const stopIds = this.placeStops(st);
     if (stopIds.length === 0) return [];
-    const ph = stopIds.map(() => '?').join(',');
-    const extra = opts.routeId ? ' AND t.route_id = ?' + (opts.directionId !== undefined ? ' AND t.direction_id = ?' : '') : '';
-    const stmt = this.db.prepare(
-      `SELECT st.trip_id, st.seq, st.stop_id, st.dep, t.route_id, t.service_id, t.headsign, t.direction_id, tb.last_stop
+    const to = opts.toStationId ? this.rec(opts.toStationId) : undefined;
+    if (opts.toStationId && !to) return [];
+    const toIds = to ? this.placeStops(to).filter((id) => !stopIds.includes(id)) : [];
+    if (to && toIds.length === 0) return [];
+    const routeIds = opts.routeIds?.filter(Boolean) ?? [];
+
+    const ph = (n: number) => Array(n).fill('?').join(',');
+    let sql = `SELECT st.trip_id, st.seq, st.stop_id, st.dep, t.route_id, t.service_id, t.headsign, t.direction_id, tb.last_stop`;
+    // With a destination: the first later stop of the same trip at the destination
+    // (SQLite returns b's columns from the row that gives MIN(b.seq)).
+    if (to) sql += `, MIN(b.seq) AS to_seq, b.arr AS to_arr, b.stop_id AS to_stop`;
+    sql += `
        FROM stop_times st
        JOIN trips t ON t.trip_id = st.trip_id
-       JOIN trip_bounds tb ON tb.trip_id = st.trip_id
-       WHERE st.stop_id IN (${ph}) AND st.dep BETWEEN ? AND ? AND st.seq < tb.last_seq${extra}`,
-    );
+       JOIN trip_bounds tb ON tb.trip_id = st.trip_id`;
+    if (to) sql += `
+       JOIN stop_times b ON b.trip_id = st.trip_id AND b.seq > st.seq AND b.stop_id IN (${ph(toIds.length)})`;
+    sql += `
+       WHERE st.stop_id IN (${ph(stopIds.length)}) AND st.dep BETWEEN ? AND ? AND st.seq < tb.last_seq`;
+    if (routeIds.length) sql += ` AND t.route_id IN (${ph(routeIds.length)})`;
+    if (opts.directionId !== undefined) sql += ` AND t.direction_id = ?`;
+    if (to) sql += ` GROUP BY st.trip_id, st.seq`;
+    const stmt = this.db.prepare(sql);
+
     const lookback = 30 * 60;
     const out: DepInternal[] = [];
     const today = serviceDate(from);
@@ -380,14 +420,12 @@ export class GtfsStore {
       const lo = from - base - lookback, hi = from + minutes * 60 - base;
       if (hi < 0) continue;
       const services = this.activeServices(day);
-      const params: (string | number)[] = [...stopIds, lo, hi];
-      if (opts.routeId) {
-        params.push(opts.routeId);
-        if (opts.directionId !== undefined) params.push(opts.directionId);
-      }
+      const params: (string | number)[] = [...toIds, ...stopIds, lo, hi, ...routeIds];
+      if (opts.directionId !== undefined) params.push(opts.directionId);
       const rows = stmt.all(...params) as {
         trip_id: string; seq: number; stop_id: string; dep: number; route_id: string; service_id: string;
         headsign: string; direction_id: number; last_stop: string;
+        to_seq?: number; to_arr?: number; to_stop?: string;
       }[];
       for (const r of rows) {
         if (!services.has(r.service_id)) continue;
@@ -397,6 +435,13 @@ export class GtfsStore {
         const rt = this.realtimeFor(opts.rt, r.trip_id, r.seq, r.stop_id, scheduled, 'dep');
         const when = rt && 'expected' in rt ? rt.expected! : scheduled;
         if (when < from - 30 || scheduled > from + minutes * 60) continue;
+        let arrival: number | undefined, arrivalDelay: number | undefined;
+        if (to && r.to_arr !== undefined && r.to_seq !== undefined) {
+          const sched = base + r.to_arr;
+          const a = this.realtimeFor(opts.rt, r.trip_id, r.to_seq, r.to_stop!, sched, 'arr');
+          arrival = a && 'expected' in a ? a.expected : sched;
+          arrivalDelay = a && 'delay' in a ? a.delay : undefined;
+        }
         out.push({
           tripId: r.trip_id,
           seq: r.seq,
@@ -414,6 +459,8 @@ export class GtfsStore {
           delay: rt && 'delay' in rt ? rt.delay : undefined,
           realtime: !!rt,
           canceled: rt && 'canceled' in rt ? true : undefined,
+          arrival,
+          arrivalDelay,
         });
       }
     }
@@ -421,19 +468,42 @@ export class GtfsStore {
     return opts.limit ? out.slice(0, opts.limit) : out;
   }
 
-  /** Arrival time of `tripId` at any stop of `stationId` after stop sequence `afterSeq`. */
-  arrival(tripId: string, afterSeq: number, stationId: string, serviceBase: number, rt?: RealtimeLookup) {
-    const st = this.rec(stationId);
-    if (!st) return undefined;
-    const children = new Set(this.placeStops(st));
-    for (const r of this.q.tripStops.all(tripId) as { seq: number; stop_id: string; arr: number }[]) {
-      if (r.seq <= afterSeq || !children.has(r.stop_id)) continue;
-      const scheduled = serviceBase + r.arr;
-      const x = this.realtimeFor(rt, tripId, r.seq, r.stop_id, scheduled, 'arr');
-      return x && 'expected' in x ? x.expected : scheduled;
+  /**
+   * Lines going directly from one place to another (both directions are checked; only the one that
+   * reaches the destination is returned), with the shortest scheduled travel time.
+   */
+  connections(fromId: string, toId: string): Connection[] {
+    const a = this.rec(fromId), b = this.rec(toId);
+    if (!a || !b) return [];
+    const fromIds = this.placeStops(a);
+    const toIds = this.placeStops(b).filter((id) => !fromIds.includes(id));
+    if (!fromIds.length || !toIds.length) return [];
+    const ph = (n: number) => Array(n).fill('?').join(',');
+    const rows = this.db.prepare(
+      `SELECT t.route_id, t.direction_id, MIN(y.arr - x.dep) AS minutes, COUNT(DISTINCT t.trip_id) AS trips,
+              MAX(t.headsign) AS headsign, MAX(tb.last_stop) AS last_stop
+       FROM stop_times x
+       JOIN stop_times y ON y.trip_id = x.trip_id AND y.seq > x.seq AND y.stop_id IN (${ph(toIds.length)})
+       JOIN trips t ON t.trip_id = x.trip_id
+       JOIN trip_bounds tb ON tb.trip_id = x.trip_id
+       WHERE x.stop_id IN (${ph(fromIds.length)})
+       GROUP BY t.route_id, t.direction_id`,
+    ).all(...toIds, ...fromIds) as {
+      route_id: string; direction_id: number; minutes: number; trips: number; headsign: string; last_stop: string;
+    }[];
+    const out: Connection[] = [];
+    for (const r of rows) {
+      const route = this.routes.get(r.route_id);
+      if (!route) continue;
+      out.push({
+        routeId: route.id, line: route.line, mode: route.mode, color: route.color, textColor: route.textColor,
+        directionId: r.direction_id, headsign: r.headsign || this.stops.get(r.last_stop)?.name || '', minutes: Math.round(r.minutes / 60), trips: r.trips,
+      });
     }
-    return undefined;
+    // Fast and frequent lines first.
+    return out.sort((x, y) => x.minutes - y.minutes || y.trips - x.trips || compareLines(x, y));
   }
+
 
   private tripStops(tripId: string): TripStop[] {
     let v = this.tripStopsCache.get(tripId);
@@ -703,20 +773,16 @@ export class GtfsStore {
     const legs: PlanResult['legs'] = [];
     req.legs.forEach((leg, index) => {
       if (leg.notBefore) t = Math.max(t, localTimeToEpoch(leg.notBefore, req.date));
+      const routeIds = leg.routeIds ?? (leg.routeId ? [leg.routeId] : undefined);
       const deps = this.departures(leg.stationId, t, 6 * 60, {
-        routeId: leg.routeId, directionId: leg.directionId, limit: 4, rt,
+        routeIds, directionId: leg.toStationId ? undefined : leg.directionId, toStationId: leg.toStationId, limit: 4, rt,
       }).filter((d) => !d.canceled);
       const departure = deps[0];
       if (!departure) {
         legs.push({ index, alternatives: [], error: 'no_departure' });
         return;
       }
-      let arrival: number | undefined;
-      if (leg.toStationId) {
-        const serviceBase = departure.scheduled - (this.q.tripStops.all(departure.tripId) as { seq: number; dep: number }[])
-          .find((r) => r.seq === departure.seq)!.dep;
-        arrival = this.arrival(departure.tripId, departure.seq, leg.toStationId, serviceBase, rt);
-      }
+      const arrival = departure.arrival;
       legs.push({
         index,
         departure: strip(departure),

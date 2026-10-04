@@ -78,6 +78,22 @@ export interface Departure {
   delay?: number;
   realtime: boolean;
   canceled?: boolean;
+  /** With a destination: arrival there (expected when realtime is known) and its delay. */
+  arrival?: number;
+  arrivalDelay?: number;
+}
+
+/** A line that goes directly from one place to another. */
+export interface Connection {
+  routeId: string;
+  line: string;
+  mode: Mode;
+  color: string;
+  textColor: string;
+  directionId: number;
+  headsign: string;
+  minutes: number; // shortest scheduled travel time
+  trips: number; // trips in the timetable (rough frequency)
 }
 
 export interface RouteDirection {
@@ -121,26 +137,30 @@ export interface TripDetail {
   shape: [number, number][]; // [lon, lat]
 }
 
-/** A favourite ride: board `line` at `stationId` going in `directionId`. */
+/**
+ * A favourite ride: from one place, optionally to another, optionally only some lines.
+ * - from + to: every line going directly between them (or only `routeIds`)
+ * - from + one line + direction: that line from that stop (starred from a departure board)
+ */
 export interface FavoriteRide {
   id: string;
-  stationId: string;
-  stationName: string;
-  routeId: string;
-  line: string;
-  mode: Mode;
-  color: string;
-  textColor: string;
-  directionId: number;
-  headsign: string;
-  toStationId?: string;
-  toStationName?: string;
+  fromId: string;
+  fromName: string;
+  toId?: string;
+  toName?: string;
+  routeIds?: string[];
+  directionId?: number;
+  /** Badges to show, cached when saved. */
+  lines: { routeId: string; line: string; mode: Mode; color: string; textColor: string }[];
+  headsign?: string;
 }
 
 export interface PlanLegRequest {
   stationId: string;
-  routeId: string;
-  directionId: number;
+  routeIds?: string[];
+  /** @deprecated use routeIds */
+  routeId?: string;
+  directionId?: number;
   toStationId?: string;
   notBefore?: string; // "HH:MM" local time
   transferMinutes?: number;
