@@ -43,6 +43,8 @@ export function useBottomSheet(ref: RefObject<HTMLElement | null>, resetKey: str
   const [desktop, setDesktop] = useState(isDesktop);
   const snapRef = useRef(snap);
   snapRef.current = snap;
+  /** Currently visible height, read when a drag starts. */
+  const visibleRef = useRef(0);
 
   useEffect(() => setSnap('half'), [resetKey]);
   useEffect(() => {
@@ -83,7 +85,7 @@ export function useBottomSheet(ref: RefObject<HTMLElement | null>, resetKey: str
       else fromHandle = !!t?.closest('.sheet-grip, .sheet-head');
       startY = lastY = y;
       lastT = performance.now();
-      startH = el.getBoundingClientRect().height;
+      startH = visibleRef.current;
       velocity = 0;
       mode = 'pending';
     };
@@ -152,9 +154,19 @@ export function useBottomSheet(ref: RefObject<HTMLElement | null>, resetKey: str
     };
   }, [ref, desktop, release, resetKey]);
 
-  const style: CSSProperties | undefined = desktop
-    ? undefined
-    : { height: dragH ?? heightOf(snap, ref.current), transition: dragH === null ? 'height 0.22s ease-out' : 'none' };
+  // The sheet always has its full height and slides with transform: dragging and snapping move pixels
+  // only, without re-laying out long stop lists on every frame. The hidden part sits under the tab bar.
+  let style: CSSProperties | undefined;
+  if (!desktop) {
+    const full = heightOf('full', ref.current);
+    const visible = Math.min(full, dragH ?? heightOf(snap, ref.current));
+    visibleRef.current = visible;
+    style = {
+      height: full,
+      transform: `translateY(${full - visible}px)`,
+      transition: dragH === null ? 'transform 0.22s ease-out' : 'none',
+    };
+  }
 
   return { snap, setSnap, style, dragging: dragH !== null };
 }
