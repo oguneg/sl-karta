@@ -7,11 +7,12 @@ import { config } from './config.ts';
 import { DataManager } from './data.ts';
 import { strip, type GtfsStore } from './gtfs/store.ts';
 import { DemoRealtime, RealtimePoller } from './realtime/poller.ts';
-import { nowSec } from './time.ts';
+import { clockShifted, nowSec } from './time.ts';
 
 const data = new DataManager();
-const poller = new RealtimePoller(config.demo ? '' : config.realtimeKey);
-const rt = config.demo ? new DemoRealtime() : poller;
+// With a shifted clock (CLOCK_AT) live data would describe the wrong moment: simulate delays instead.
+const poller = new RealtimePoller(config.demo || clockShifted ? '' : config.realtimeKey);
+const rt = config.demo || clockShifted ? new DemoRealtime() : poller;
 
 const app = Fastify({ logger: { level: 'warn' } });
 await app.register(cors, { origin: true });

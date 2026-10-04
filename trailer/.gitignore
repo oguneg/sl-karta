@@ -4,3 +4,5 @@ public/shots/
 public/music.wav
 public/network.json
 src/rects.json
+public/vo/
+.env

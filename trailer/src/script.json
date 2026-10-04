@@ -1,0 +1,11 @@
+[
+  { "id": "intro", "vo": "Stockholm never stands still.", "caption": "Stockholm never\nstands still.", "accent": "still.", "color": "#179a3e", "min": 120 },
+  { "id": "map", "vo": "SL Karta shows every bus, train and metro. Live, on one map.", "caption": "Every bus, train\nand metro. Live.", "accent": "Live.", "color": "#e2508f", "min": 135 },
+  { "id": "lines", "vo": "Tap a stop, and see every line running through it.", "caption": "Tap a stop.\nSee every line.", "accent": "line.", "color": "#d71d24", "min": 105 },
+  { "id": "vehicle", "vo": "Tap a departure, and follow it, stop by stop, all the way to yours.", "caption": "Follow it to\nyour stop.", "accent": "stop.", "color": "#179a3e", "min": 105 },
+  { "id": "favorites", "vo": "Save the rides you take every day.", "caption": "Save your\nrides.", "accent": "rides.", "color": "#0089ca", "min": 100 },
+  { "id": "plan", "vo": "Plan your morning around them,", "caption": "Plan your day.", "accent": "day.", "color": "#d97a1e", "min": 85 },
+  { "id": "nearby", "vo": "and see what's leaving right around you.", "caption": "What leaves\nnear you.", "accent": "you.", "color": "#00929f", "min": 80 },
+  { "id": "desktop", "vo": "On your phone, or on the web.", "caption": "On your phone.\nOn the web.", "accent": "web.", "color": "#0b5ea8", "min": 85 },
+  { "id": "outro", "vo": "SL Karta. Stockholm, live.", "caption": "", "accent": "", "color": "#0b5ea8", "min": 95 }
+]

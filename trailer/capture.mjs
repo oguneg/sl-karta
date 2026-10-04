@@ -1,5 +1,7 @@
 // Captures real screenshots of the live app for the trailer (Chrome via puppeteer-core).
 // Usage: node capture.mjs [baseUrl]   (default https://sl.ogun.se)
+// CLOCK_AT=2026-10-05T17:40:00+02:00 shifts the browser clock to match a server started with the same
+// CLOCK_AT (see server/src/time.ts), e.g. to capture rush hour at night.
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer-core';
@@ -42,8 +44,22 @@ const browser = await puppeteer.launch({
   args: ['--ignore-gpu-blocklist', '--enable-webgl', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--hide-scrollbars'],
 });
 
+const CLOCK_OFFSET_MS = process.env.CLOCK_AT ? Date.parse(process.env.CLOCK_AT) - Date.now() : 0;
+async function shiftClock(page) {
+  if (!CLOCK_OFFSET_MS) return;
+  await page.evaluateOnNewDocument((off) => {
+    const Real = Date;
+    class Shifted extends Real {
+      constructor(...a) { if (a.length === 0) super(Real.now() + off); else super(...a); }
+      static now() { return Real.now() + off; }
+    }
+    globalThis.Date = Shifted;
+  }, CLOCK_OFFSET_MS);
+}
+
 async function phonePage(view, extraStorage = {}) {
   const page = await browser.newPage();
+  await shiftClock(page);
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2.5, isMobile: true, hasTouch: true });
   const storage = {
     'slk.settings': JSON.stringify({ state: { lang: 'en', theme: 'light', modes: ['metro', 'train', 'tram', 'bus', 'ship'] }, version: 0 }),
@@ -105,6 +121,32 @@ const city = { center: [18.0655, 59.3285], zoom: 13.4 };
   await page.close();
 }
 
+// 1b. Wide city view
+{
+  const page = await phonePage({ center: [18.055, 59.33], zoom: 11.8 });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await settle(page, 8000);
+  await shot(page, 'mapwide');
+  await page.close();
+}
+
+// 1c. Landscape map-only city view (app chrome hidden) for full-screen use
+{
+  const page = await browser.newPage();
+  await shiftClock(page);
+  await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1.5 });
+  await page.evaluateOnNewDocument((s) => { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); }, {
+    'slk.settings': JSON.stringify({ state: { lang: 'en', theme: 'light', modes: ['metro', 'train', 'tram', 'bus', 'ship'] }, version: 0 }),
+    'slk.view': JSON.stringify({ center: [18.06, 59.329], zoom: 13.1 }),
+  });
+  await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+  await page.addStyleTag({ content: '.panel,.tabbar,.map-top,.banner,.maplibregl-control-container{display:none!important}.app{display:block!important}.stage{position:absolute!important;inset:0!important}' });
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  await settle(page, 9000);
+  await shot(page, 'citywide');
+  await page.close();
+}
+
 // 3. A stop's lines drawn across the city
 {
   const page = await phonePage({ center: [18.05, 59.338], zoom: 11.6 });
@@ -146,6 +188,7 @@ const city = { center: [18.0655, 59.3285], zoom: 13.4 };
 // 7. Desktop view for the finale
 {
   const page = await browser.newPage();
+  await shiftClock(page);
   await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1.5 });
   await page.evaluateOnNewDocument((s) => { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); }, {
     'slk.settings': JSON.stringify({ state: { lang: 'en', theme: 'light', modes: ['metro', 'train', 'tram', 'bus', 'ship'] }, version: 0 }),

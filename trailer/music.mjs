@@ -2,16 +2,21 @@
 // One bar = 2 s = 60 video frames, so scene cuts in the trailer land on bars.
 import fs from 'node:fs';
 
-const SR = 44100, BPM = 120, BARS = 15;
+// Length follows the trailer timeline (src/script.json minimums, stretched to fit the voiceover).
+const script = JSON.parse(fs.readFileSync('src/script.json', 'utf8'));
+const vo = fs.existsSync('src/vo.json') ? JSON.parse(fs.readFileSync('src/vo.json', 'utf8')) : {};
+const DELAY = { intro: 24, map: 10, outro: 18 };
+const frames = script.reduce((t, s) => t + Math.max(s.min, vo[s.id] ? (DELAY[s.id] ?? 6) + Math.ceil(vo[s.id].seconds * 30) + 14 : 0), 0);
+const SR = 44100, BPM = 120, BARS = Math.ceil(frames / 30 / 2);
 const beat = 60 / BPM, bar = beat * 4, dur = BARS * bar;
-const N = Math.round(dur * SR);
+const N = Math.round((frames / 30) * SR); // exactly the video length
 const L = new Float32Array(N), R = new Float32Array(N);
 
 const midi = (m) => 440 * 2 ** ((m - 69) / 12);
 // Am, F, C, G (root note + chord tones), one chord per bar.
 const chords = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]];
 const INTRO = 2; // bars before the drop
-const OUTRO_FROM = 14; // last bar fades
+const OUTRO_FROM = BARS - 1; // last bar fades
 
 function add(buf, start, samples, gainL, gainR) {
   const s0 = Math.round(start * SR);
@@ -88,7 +93,7 @@ for (let b = 0; b < BARS; b++) {
 let peak = 0;
 for (let i = 0; i < N; i++) {
   const t = i / SR;
-  const g = Math.min(1, t / 0.5) * Math.min(1, (dur - t) / 1.5);
+  const g = Math.min(1, t / 0.5) * Math.min(1, (N / SR - t) / 1.5);
   L[i] = Math.tanh(L[i] * 1.2) * g;
   R[i] = Math.tanh(R[i] * 1.2) * g;
   peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
@@ -107,4 +112,4 @@ header.writeUInt32LE(SR, 24); header.writeUInt32LE(SR * 4, 28); header.writeUInt
 header.write('data', 36); header.writeUInt32LE(data.length, 40);
 fs.mkdirSync('public', { recursive: true });
 fs.writeFileSync('public/music.wav', Buffer.concat([header, data]));
-console.log(`music.wav: ${dur}s, ${(44 + data.length) / 1e6} MB`);
+console.log(`music.wav: ${(N / SR).toFixed(2)}s, ${(44 + data.length) / 1e6} MB`);

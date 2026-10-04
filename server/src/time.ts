@@ -11,7 +11,11 @@ const fmt = new Intl.DateTimeFormat('en-CA', {
   hourCycle: 'h23',
 });
 
-export const nowSec = () => Math.floor(Date.now() / 1000);
+// CLOCK_AT (e.g. 2026-10-05T17:40:00+02:00) runs the server as if it were that moment, with time
+// moving forward from there. For demos and trailer capture only; never set in production.
+const CLOCK_OFFSET = process.env.CLOCK_AT ? Math.round((Date.parse(process.env.CLOCK_AT) - Date.now()) / 1000) : 0;
+export const clockShifted = CLOCK_OFFSET !== 0;
+export const nowSec = () => Math.floor(Date.now() / 1000) + CLOCK_OFFSET;
 
 function parts(epochSec: number) {
   const p: Record<string, number> = {};

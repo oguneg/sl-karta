@@ -1,11 +1,9 @@
-import { useMemo } from 'react';
-import { interpolate, staticFile, useCurrentFrame } from 'remotion';
-import { useEffect, useState } from 'react';
-import { continueRender, delayRender } from 'remotion';
+import { useEffect, useMemo, useState } from 'react';
+import { continueRender, delayRender, staticFile } from 'remotion';
 
 type Fc = { features: { geometry: { coordinates: [number, number][] }; properties: { color: string; mode: string } }[] };
 
-/** The real SL rail network (from the app's /api/network), loaded once per render. */
+/** The real SL rail network (the app's /api/network), loaded once per render. */
 export function useNetwork() {
   const [data, setData] = useState<Fc>();
   const [handle] = useState(() => delayRender('network'));
@@ -20,61 +18,87 @@ export function useNetwork() {
   return data;
 }
 
-/** Project lon/lat to SVG paths fitted into width × height (equirectangular, latitude-corrected). */
-function project(fc: Fc, width: number, height: number, focus: number) {
-  // Frame inner Stockholm: clamp the view to the central area (focus 1) or the whole region (focus 0).
-  const all = fc.features.flatMap((f) => f.geometry.coordinates);
-  const lons = all.map((c) => c[0]), lats = all.map((c) => c[1]);
-  const region = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
-  const city = [17.82, 59.2, 18.3, 59.45];
-  const b = region.map((v, i) => v + (city[i] - v) * focus);
-  const k = Math.cos((59.33 * Math.PI) / 180);
-  const w = (b[2] - b[0]) * k, h = b[3] - b[1];
-  const scale = Math.min(width / w, height / h);
-  const ox = (width - w * scale) / 2, oy = (height - h * scale) / 2;
-  return fc.features.map((f) => ({
-    color: f.properties.color,
-    rail: f.properties.mode !== 'tram',
-    d: f.geometry.coordinates
-      .map(([x, y], i) => `${i ? 'L' : 'M'}${(ox + (x - b[0]) * k * scale).toFixed(1)},${(oy + (b[3] - y) * scale).toFixed(1)}`)
-      .join(''),
-  }));
+export const W = 1920, H = 1080;
+const CENTER: [number, number] = [18.0596, 59.3313]; // T-Centralen: the network grows from here
+const VIEW = [17.62, 59.12, 18.5, 59.56]; // lon/lat box framed by the 1920 × 1080 canvas
+const K = Math.cos((59.33 * Math.PI) / 180);
+const SCALE = Math.min(W / ((VIEW[2] - VIEW[0]) * K), H / (VIEW[3] - VIEW[1]));
+const OX = (W - (VIEW[2] - VIEW[0]) * K * SCALE) / 2, OY = (H - (VIEW[3] - VIEW[1]) * SCALE) / 2;
+const px = ([x, y]: [number, number]) => [OX + (x - VIEW[0]) * K * SCALE, OY + (VIEW[3] - y) * SCALE] as const;
+export const CENTER_PX = px(CENTER);
+
+type Branch = { d: string; color: string; width: number; seed: number; reach: number };
+
+/**
+ * Each line split at its point nearest the centre into two branches that run outward, so growth and
+ * impulses travel from the heart of the city to the edges like a nervous system.
+ */
+function branches(fc: Fc): Branch[] {
+  const out: Branch[] = [];
+  fc.features.forEach((f, fi) => {
+    const c = f.geometry.coordinates;
+    let k = 0, best = Infinity;
+    c.forEach(([x, y], i) => {
+      const d = ((x - CENTER[0]) * K) ** 2 + (y - CENTER[1]) ** 2;
+      if (d < best) [best, k] = [d, i];
+    });
+    const near = Math.sqrt(best); // how far from the centre this line starts (deg)
+    for (const half of [c.slice(0, k + 1).reverse(), c.slice(k)]) {
+      if (half.length < 2) continue;
+      out.push({
+        d: half.map((p, i) => { const [X, Y] = px(p); return `${i ? 'L' : 'M'}${X.toFixed(1)},${Y.toFixed(1)}`; }).join(''),
+        color: f.properties.color,
+        width: f.properties.mode === 'tram' ? 3.4 : 4.6,
+        seed: ((fi * 7919 + out.length * 104729) % 1000) / 1000,
+        reach: Math.min(1, near / 0.08), // lines that start further out begin growing a little later
+      });
+    }
+  });
+  return out;
 }
 
 /**
- * Network lines. `draw` (0..1) reveals each line along its length, staggered; `opacity` dims it for
- * use as a background.
+ * The network. `grow` 0..1 draws branches outward from the centre; `pulse` turns on travelling
+ * impulses (frame drives them); `dim` fades the lines for use behind content.
  */
-export function NetworkLines({ data, draw = 1, opacity = 1, width = 1920, height = 1080, strokeWidth = 3, focus = 0.75 }: {
-  data?: Fc; draw?: number; opacity?: number; width?: number; height?: number; strokeWidth?: number; focus?: number;
+export function NervousNetwork({ data, frame, grow = 1, pulse = true, dim = 1, glow = 1 }: {
+  data?: Fc; frame: number; grow?: number; pulse?: boolean; dim?: number; glow?: number;
 }) {
-  const paths = useMemo(() => (data ? project(data, width, height, focus) : []), [data, width, height, focus]);
+  const list = useMemo(() => (data ? branches(data) : []), [data]);
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ position: 'absolute', inset: 0, opacity }}>
-      {paths.map((p, i) => {
-        const start = (i / paths.length) * 0.45;
-        const local = Math.max(0, Math.min(1, (draw - start) / 0.55));
-        return (
-          <path
-            key={i}
-            d={p.d}
-            fill="none"
-            stroke={p.color}
-            strokeWidth={p.rail ? strokeWidth : strokeWidth * 0.75}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            pathLength={1}
-            strokeDasharray="1 1"
-            strokeDashoffset={1 - local}
-          />
-        );
-      })}
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
+      <defs>
+        <filter id="impulse-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="5" result="b" />
+          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <g opacity={dim}>
+        {list.map((b, i) => {
+          const local = Math.max(0, Math.min(1, (grow - b.reach * 0.25) / 0.75));
+          return (
+            <path key={i} d={b.d} fill="none" stroke={b.color} strokeWidth={b.width} strokeLinecap="round" strokeLinejoin="round"
+              pathLength={1} strokeDasharray="1 1" strokeDashoffset={1 - local} />
+          );
+        })}
+      </g>
+      {pulse && (
+        <g filter="url(#impulse-glow)" opacity={glow}>
+          {list.map((b, i) => {
+            const local = Math.max(0, Math.min(1, (grow - b.reach * 0.25) / 0.75));
+            // Two impulses per branch, travelling outward at slightly different speeds.
+            return [0, 0.5].map((shift) => {
+              const speed = 0.006 + b.seed * 0.004;
+              const pos = ((frame * speed + b.seed + shift) % 1.15) - 0.08;
+              if (pos > local || pos < -0.05) return null;
+              return (
+                <path key={`${i}-${shift}`} d={b.d} fill="none" stroke={b.color} strokeWidth={b.width * 2.2} strokeLinecap="round"
+                  pathLength={1} strokeDasharray="0.025 2" strokeDashoffset={-pos} />
+              );
+            });
+          })}
+        </g>
+      )}
     </svg>
   );
-}
-
-/** Slow drift for background layers. */
-export function useDrift(speed = 0.02) {
-  const frame = useCurrentFrame();
-  return interpolate(frame, [0, 900], [0, 900 * speed]);
 }

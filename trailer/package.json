@@ -6,7 +6,9 @@
     "capture": "node capture.mjs",
     "music": "node music.mjs",
     "studio": "remotion studio src/index.ts",
-    "render": "remotion render src/index.ts Trailer out/sl-karta-trailer.mp4 --codec h264 --crf 18"
+    "render": "remotion render src/index.ts Trailer out/sl-karta-trailer.mp4 --codec h264 --crf 18",
+    "vo": "node vo.mjs",
+    "capture:rush": "node capture.mjs http://localhost:8790"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.532",
