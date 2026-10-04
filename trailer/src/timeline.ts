@@ -10,7 +10,7 @@ export type Segment = (typeof script)[number] & {
 };
 
 /** vo.json is written by vo.mjs (Gemini TTS): spoken length per line, so segments fit the voice. */
-const voLines = vo as Record<string, { file: string; seconds: number } | undefined>;
+const voLines = vo as unknown as Record<string, { file: string; seconds: number } | undefined>;
 
 export const FPS = 30;
 const VO_DELAY: Record<string, number> = { intro: 24, map: 10, outro: 18 };

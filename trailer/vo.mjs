@@ -45,8 +45,13 @@ async function tts(text) {
       const rate = Number(/rate=(\d+)/.exec(part.inlineData.mimeType)?.[1] ?? 24000);
       return { pcm: Buffer.from(part.inlineData.data, 'base64'), rate };
     }
-    if ((res.status === 429 || res.status >= 500) && attempt < 5) {
-      await new Promise((r) => setTimeout(r, 2000 * attempt));
+    if ((res.status === 429 || res.status >= 500) && attempt < 8) {
+      // Free tier allows 3 requests/minute: wait as long as the API asks (at least 21 s on 429).
+      const text = await res.text();
+      const hint = Number(/"retryDelay":\s*"(\d+)/.exec(text)?.[1] ?? 0);
+      const wait = res.status === 429 ? Math.max(21, hint + 1) : 3 * attempt;
+      process.stdout.write(`(waiting ${wait}s) `);
+      await new Promise((r) => setTimeout(r, wait * 1000));
       continue;
     }
     throw new Error(`Gemini TTS ${res.status}: ${(await res.text()).slice(0, 400)}`);
@@ -73,16 +78,30 @@ function wav(pcm, rate) {
   return Buffer.concat([h, pcm]);
 }
 
+// Reuse clips whose text hasn't changed (FORCE=1 regenerates all); pace calls for the free tier.
+const prev = fs.existsSync('src/vo.json') ? JSON.parse(fs.readFileSync('src/vo.json', 'utf8')) : {};
 const out = {};
+let calls = 0;
 for (const s of script) {
+  const file = `vo/${s.id}.wav`;
+  const disk = path.join('public', file);
   process.stdout.write(`  ${s.id.padEnd(10)} "${s.vo}" … `);
+  const same = prev[s.id]?.text === s.vo || (prev[s.id] === undefined && !prev._complete);
+  if (!env('FORCE') && fs.existsSync(disk) && same) {
+    const bytes = fs.statSync(disk).size - 44;
+    const rate = fs.readFileSync(disk).readUInt32LE(24);
+    out[s.id] = { file, text: s.vo, seconds: +(bytes / 2 / rate).toFixed(3) };
+    console.log(`${out[s.id].seconds}s (kept)`);
+    continue;
+  }
+  if (calls++ > 0) await new Promise((r) => setTimeout(r, 21000));
   const { pcm, rate } = await tts(s.vo);
   const clip = trim(pcm, rate);
-  const file = `vo/${s.id}.wav`;
-  fs.writeFileSync(path.join('public', file), wav(clip, rate));
-  out[s.id] = { file, seconds: +(clip.length / 2 / rate).toFixed(3) };
+  fs.writeFileSync(disk, wav(clip, rate));
+  out[s.id] = { file, text: s.vo, seconds: +(clip.length / 2 / rate).toFixed(3) };
   console.log(`${out[s.id].seconds}s`);
 }
+out._complete = true;
 fs.writeFileSync('src/vo.json', JSON.stringify(out, null, 2) + '\n');
 const total = script.reduce((t, s) => t + out[s.id].seconds, 0);
 console.log(`voice: ${MODEL} / ${VOICE}, ${total.toFixed(1)}s of speech. Now: npm run music && npm run render`);
